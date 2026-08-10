@@ -103,6 +103,19 @@ object Wire {
             put("t", "x")
             put("id", event.riderId)
         }
+
+        is RideEvent.Handover -> JSONObject().apply {
+            put("t", "h")
+            put("id", event.riderId)
+            put("n", event.name)
+            put("to", event.newLeaderId)
+        }
+
+        is RideEvent.RideEnded -> JSONObject().apply {
+            put("t", "end")
+            put("id", event.riderId)
+            put("n", event.name)
+        }
     }.toString()
 
     /** Returns null for anything unrecognised — a future version's messages must not crash us. */
@@ -153,6 +166,8 @@ object Wire {
 
             "m" -> RideEvent.Preset(id, name, o.optString("msg"), o.optLong("ts"))
             "x" -> RideEvent.Left(id)
+            "h" -> RideEvent.Handover(id, o.optString("to"), name)
+            "end" -> RideEvent.RideEnded(id, name)
             else -> null
         }
     }.getOrNull()

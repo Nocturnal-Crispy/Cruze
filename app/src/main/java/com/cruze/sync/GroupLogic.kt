@@ -59,7 +59,6 @@ fun groupSpreadM(positions: List<LatLon>): Double {
  */
 fun resolveLeaderId(roster: List<RiderPing>): String? =
     roster.filter { it.role == RiderRole.LEADER }.minByOrNull { it.riderId }?.riderId
-        ?: roster.minByOrNull { it.riderId }?.riderId
 
 /** The role to actually display, after leader conflicts are resolved. */
 fun effectiveRole(ping: RiderPing, leaderId: String?): RiderRole = when {

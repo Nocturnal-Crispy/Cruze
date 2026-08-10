@@ -176,4 +176,6 @@ fun RideEvent.riderId(): String = when (this) {
     is RideEvent.Alert -> riderId
     is RideEvent.Preset -> riderId
     is RideEvent.Left -> riderId
+    is RideEvent.Handover -> riderId
+    is RideEvent.RideEnded -> riderId
 }

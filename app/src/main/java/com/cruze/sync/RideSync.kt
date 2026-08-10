@@ -64,6 +64,12 @@ sealed interface RideEvent {
     data class Preset(val riderId: String, val name: String, val message: String, val atMs: Long) : RideEvent
 
     data class Left(val riderId: String) : RideEvent
+
+    /** The leader passing the role to someone else. */
+    data class Handover(val riderId: String, val newLeaderId: String, val name: String) : RideEvent
+
+    /** The leader ending the ride. Without a leader there is no ride, so everyone drops out. */
+    data class RideEnded(val riderId: String, val name: String) : RideEvent
 }
 
 /** Which pipe the group is actually talking over right now. */

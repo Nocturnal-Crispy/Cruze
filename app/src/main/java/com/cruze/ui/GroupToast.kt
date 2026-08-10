@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -79,35 +81,43 @@ fun BoxScope.GroupToast() {
         visible = shown != null,
         enter = slideInVertically { -it } + fadeIn(),
         exit = slideOutVertically { -it } + fadeOut(),
-        modifier = Modifier.align(Alignment.TopCenter),
+        // statusBarsPadding keeps it clear of the clock and signal icons: this sits outside
+        // the Scaffold, so it is not inset for the system bars by anything else.
+        modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
     ) {
         val t = shown ?: return@AnimatedVisibility
         Surface(
-            shape = RoundedCornerShape(18.dp),
+            shape = RoundedCornerShape(22.dp),
             color = if (t.urgent) MaterialTheme.colorScheme.errorContainer
-            else MaterialTheme.colorScheme.surfaceContainerHighest,
-            shadowElevation = 8.dp,
+            else MaterialTheme.colorScheme.primaryContainer,
+            shadowElevation = 12.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .heightIn(min = 96.dp)
                 .clickable { shown = null },
         ) {
-            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(14.dp).background(riderColor(t.riderId), CircleShape)
-                )
-                Column(Modifier.padding(start = 12.dp)) {
+            Row(
+                Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(22.dp).background(riderColor(t.riderId), CircleShape))
+                Column(Modifier.padding(start = 16.dp)) {
                     Text(
-                        t.who,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        t.who.uppercase(),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.sp,
+                        color = if (t.urgent) MaterialTheme.colorScheme.onErrorContainer
+                        else MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                     Text(
                         t.what,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
+                        fontSize = 30.sp,
+                        lineHeight = 34.sp,
                         color = if (t.urgent) MaterialTheme.colorScheme.onErrorContainer
-                        else Color.Unspecified,
+                        else MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                 }
             }

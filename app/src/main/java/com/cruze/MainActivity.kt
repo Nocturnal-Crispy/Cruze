@@ -157,6 +157,21 @@ private fun App(
         }
     }
 
+    // Tell the rider why a join failed or a ride stopped, rather than silently dropping them.
+    val joinState by GroupState.joinState.collectAsStateWithLifecycle()
+    LaunchedEffect(joinState) {
+        if (joinState == GroupState.JoinState.NOT_FOUND) {
+            snackbar.showSnackbar("No ride found with that code. Check it, or ask the leader to start theirs first.")
+        }
+    }
+    val endedBy by GroupState.endedBy.collectAsStateWithLifecycle()
+    LaunchedEffect(endedBy) {
+        endedBy?.let {
+            snackbar.showSnackbar("$it ended the ride.")
+            GroupState.consumeEnded()
+        }
+    }
+
     LaunchedEffect(vm.message) { vm.message?.let { snackbar.showSnackbar(it); vm.message = null } }
     LaunchedEffect(garage.message) { garage.message?.let { snackbar.showSnackbar(it); garage.message = null } }
     LaunchedEffect(status) {

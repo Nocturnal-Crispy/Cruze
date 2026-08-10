@@ -78,7 +78,39 @@ fun riderColor(riderId: String): Color {
 @Composable
 fun GroupScreen(onShareRoute: () -> Unit) {
     val session by GroupState.session.collectAsStateWithLifecycle()
-    if (session == null) StartOrJoin() else InRide(onShareRoute)
+    val joinState by GroupState.joinState.collectAsStateWithLifecycle()
+    when {
+        session != null && joinState == GroupState.JoinState.SEARCHING -> Searching()
+        session != null -> InRide(onShareRoute)
+        else -> StartOrJoin()
+    }
+}
+
+/** Shown while we listen for the ride's leader, before committing the rider to the group. */
+@Composable
+private fun Searching() {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        CircularProgressIndicator()
+        Text(
+            "Looking for the ride…",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 20.dp),
+        )
+        Text(
+            "Waiting to hear from the leader. A ride only exists while its leader is running it.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        TextButton(
+            onClick = { scope.launch { GroupState.stop() } },
+            modifier = Modifier.padding(top = 16.dp),
+        ) { Text("Cancel") }
+    }
 }
 
 @Composable
@@ -174,6 +206,7 @@ private fun InRide(onShareRoute: () -> Unit) {
     val routeProgress by GroupState.routeProgress.collectAsStateWithLifecycle()
     val fix by RideState.fix.collectAsStateWithLifecycle()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var leaving by remember { mutableStateOf(false) }
     val s = session ?: return
 
     val everyone = remember(roster, fix) {
@@ -350,7 +383,10 @@ private fun InRide(onShareRoute: () -> Unit) {
                     ) { Text("Push my route", maxLines = 1) }
                 }
                 Button(
-                    onClick = { scope.launch { GroupState.stop() } },
+                    onClick = {
+                        if (s.role == RiderRole.LEADER) leaving = true
+                        else scope.launch { GroupState.stop() }
+                    },
                     modifier = Modifier.weight(1f).height(52.dp),
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -363,6 +399,73 @@ private fun InRide(onShareRoute: () -> Unit) {
 
         item { Spacer(Modifier.height(24.dp)) }
     }
+
+    if (leaving) {
+        LeaveLeaderDialog(
+            others = roster,
+            onDismiss = { leaving = false },
+            onHandOver = { id ->
+                GroupState.handOverTo(id)
+                leaving = false
+            },
+            onEndRide = {
+                GroupState.endRide()
+                leaving = false
+            },
+        )
+    }
+}
+
+/**
+ * The leader cannot simply walk away: the ride ends without them, so they have to say whether
+ * someone else should take it on first.
+ */
+@Composable
+private fun LeaveLeaderDialog(
+    others: List<RiderPing>,
+    onDismiss: () -> Unit,
+    onHandOver: (String) -> Unit,
+    onEndRide: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("You are leading this ride") },
+        text = {
+            Column {
+                Text(
+                    if (others.isEmpty())
+                        "Nobody else is in the ride yet, so leaving ends it."
+                    else
+                        "If you leave, the ride ends for everyone. Hand it to another rider " +
+                            "to keep it going.",
+                )
+                if (others.isNotEmpty()) {
+                    Text(
+                        "Hand over to",
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                    )
+                    others.forEach { r ->
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clickable { onHandOver(r.riderId) }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(Modifier.size(14.dp).background(riderColor(r.riderId), CircleShape))
+                            Text(r.name, Modifier.padding(start = 12.dp), fontSize = 16.sp)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onEndRide) {
+                Text("End ride for everyone", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Stay") } },
+    )
 }
 
 @Composable

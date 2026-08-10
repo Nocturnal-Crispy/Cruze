@@ -44,6 +44,19 @@ object GroupState {
     private val _session = MutableStateFlow<GroupSession?>(null)
     val session: StateFlow<GroupSession?> = _session.asStateFlow()
 
+    /**
+     * Joining is not instant: a code only means something if a leader is actually out there
+     * running that ride. Until one is heard from, the join is pending — otherwise a typo puts
+     * a rider alone in an empty group that looks exactly like a working one.
+     */
+    enum class JoinState { IDLE, SEARCHING, ACTIVE, NOT_FOUND }
+
+    private val _joinState = MutableStateFlow(JoinState.IDLE)
+    val joinState: StateFlow<JoinState> = _joinState.asStateFlow()
+
+    /** How long to listen for a leader before deciding the ride does not exist. */
+    private const val JOIN_TIMEOUT_MS = 20_000L
+
     private val _alerts = MutableStateFlow<List<RideEvent.Alert>>(emptyList())
     val alerts: StateFlow<List<RideEvent.Alert>> = _alerts.asStateFlow()
 
@@ -67,6 +80,10 @@ object GroupState {
      */
     private val _routeProgress = MutableStateFlow<Float?>(null)
     val routeProgress: StateFlow<Float?> = _routeProgress.asStateFlow()
+
+    /** Set when the leader ends the ride, so followers can be told why it stopped. */
+    private val _endedBy = MutableStateFlow<String?>(null)
+    val endedBy: StateFlow<String?> = _endedBy.asStateFlow()
 
     /** Breadcrumbs per rider, so a rider who dropped out still shows where they went. */
     private val _trails = MutableStateFlow<Map<String, List<LatLon>>>(emptyMap())
@@ -121,6 +138,23 @@ object GroupState {
                             _routeProgress.value = assembler.progress()
                         }
                     }
+                    is RideEvent.Handover -> {
+                        val s = _session.value
+                        if (s != null && event.newLeaderId == s.riderId) {
+                            // We have been handed the ride.
+                            _session.value = s.copy(role = RiderRole.LEADER)
+                            lastPublished = null   // announce the new role immediately
+                            lastPublishAt = 0L
+                        }
+                    }
+
+                    is RideEvent.RideEnded -> {
+                        // No leader, no ride. Drop out rather than leaving riders following
+                        // a group that no longer exists.
+                        _endedBy.value = event.name
+                        scope.launch { stop() }
+                    }
+
                     is RideEvent.Position -> {
                         val id = event.ping.riderId
                         val trail = (_trails.value[id].orEmpty() + event.ping.pos).takeLast(200)
@@ -138,6 +172,7 @@ object GroupState {
     suspend fun start(joinCode: String, name: String, role: RiderRole) {
         val s = GroupSession(Wire.normaliseCode(joinCode), Wire.newRiderId(), name, role)
         _session.value = s
+        _joinState.value = if (role == RiderRole.LEADER) JoinState.ACTIVE else JoinState.SEARCHING
         _alerts.value = emptyList()
         _messages.value = emptyList()
         _trails.value = emptyMap()
@@ -145,10 +180,31 @@ object GroupState {
         _routeProgress.value = null
         assembler.clear()
         onSessionChanged?.invoke(false)
+        _joinState.value = JoinState.IDLE
         lastPublishAt = 0L
         lastPublished = null
         repository.join(s.joinCode, me(s, batteryPct = 100))
         onSessionChanged?.invoke(true)
+
+        if (role != RiderRole.LEADER) waitForLeader()
+    }
+
+    /** Gives up on a join when no leader is heard from, so a wrong code fails loudly. */
+    private fun waitForLeader() = scope.launch {
+        val deadline = System.currentTimeMillis() + JOIN_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            if (_session.value == null) return@launch
+            if (roster.value.any { it.role == RiderRole.LEADER }) {
+                _joinState.value = JoinState.ACTIVE
+                return@launch
+            }
+            kotlinx.coroutines.delay(500)
+        }
+        if (_joinState.value == JoinState.SEARCHING) {
+            _joinState.value = JoinState.NOT_FOUND
+            stop()
+            _joinState.value = JoinState.NOT_FOUND
+        }
     }
 
     suspend fun stop() {
@@ -239,6 +295,27 @@ object GroupState {
     }
 
     fun consumeSharedRoute() { _sharedRoute.value = null }
+
+    fun consumeEnded() { _endedBy.value = null }
+
+    /** Hands the ride to another rider and steps back to being an ordinary rider. */
+    fun handOverTo(newLeaderId: String) {
+        val s = _session.value ?: return
+        if (s.role != RiderRole.LEADER) return
+        _session.value = s.copy(role = RiderRole.RIDER)
+        lastPublished = null
+        lastPublishAt = 0L
+        scope.launch { repository.publish(RideEvent.Handover(s.riderId, newLeaderId, s.name)) }
+    }
+
+    /** Ends the ride for the whole group. Only the leader can do this. */
+    fun endRide() {
+        val s = _session.value ?: return
+        scope.launch {
+            repository.publish(RideEvent.RideEnded(s.riderId, s.name))
+            stop()
+        }
+    }
 
     fun dismissAlert(alert: RideEvent.Alert) {
         _alerts.value = _alerts.value.filterNot { it.riderId == alert.riderId && it.atMs == alert.atMs }

@@ -46,8 +46,36 @@ object Valhalla {
                 .flatMap { it.await() }
         }
         if (candidates.isEmpty()) throw ServiceException("No route found. Check the points are reachable by road.")
-        return pickBest(dedupe(candidates), style)
-            ?: throw ServiceException("No usable route found.")
+        val alive = dedupe(candidates)
+        val best = pickBest(alive, style) ?: throw ServiceException("No usable route found.")
+        return if (Settings.avoidUnpaved) avoidGravel(best, alive, style) else best
+    }
+
+    /** Fraction of a route that may be unpaved before we look for something else. */
+    private const val UNPAVED_TOLERANCE = 0.02
+
+    /**
+     * Verifies the chosen route really is paved, and swaps to another candidate if not.
+     *
+     * The router is only asked to avoid unpaved roads; whether it did is a separate question,
+     * and one worth a single extra call when the alternative is putting a road bike on gravel.
+     */
+    private suspend fun avoidGravel(
+        best: RoutePlan,
+        candidates: List<RoutePlan>,
+        style: RouteStyle,
+    ): RoutePlan {
+        val report = Surface.check(best.shape)
+        if (!report.checked || report.unpavedFraction <= UNPAVED_TOLERANCE) return best
+
+        // The winner has dirt on it. Try the others, cleanest first.
+        val others = candidates.filter { it !== best }
+        val scored = others.map { it to Surface.check(it.shape) }
+        val clean = scored.filter { (_, r) -> r.checked && r.unpavedFraction <= UNPAVED_TOLERANCE }
+        if (clean.isNotEmpty()) return pickBest(clean.map { it.first }, style) ?: best
+
+        // Nothing is fully paved: take whichever has the least dirt rather than failing.
+        return scored.minByOrNull { (_, r) -> r.unpavedFraction }?.first ?: best
     }
 
     /**
@@ -113,9 +141,21 @@ object Valhalla {
                     put("use_highways", useHighways)
                     put("use_tolls", if (Settings.avoidTolls) 0.0 else 0.5)
                     put("use_ferry", if (Settings.avoidFerries) 0.0 else 0.5)
-                    // Trails are unpaved by definition; tracks cover the rest.
-                    put("use_trails", if (Settings.avoidUnpaved) 0.0 else 0.4)
-                    put("use_tracks", if (Settings.avoidUnpaved) 0.0 else 0.3)
+                    if (Settings.avoidUnpaved) {
+                        // Everything the engine offers for staying on tarmac. A road bike on
+                        // gravel is at best unpleasant and at worst a dropped bike, so this is
+                        // belt and braces: trails and tracks are unpaved by definition, and
+                        // exclude_unpaved covers surfaces the classification misses.
+                        put("use_trails", 0.0)
+                        put("use_tracks", 0.0)
+                        put("exclude_unpaved", true)
+                        put("use_living_streets", 0.1)
+                        // A motorcycle is not a dirt bike; refuse anything not built for road use.
+                        put("shortest", false)
+                    } else {
+                        put("use_trails", 0.4)
+                        put("use_tracks", 0.3)
+                    }
                 })
             })
             // Drives the spoken instructions too — "in a quarter mile, turn right".
