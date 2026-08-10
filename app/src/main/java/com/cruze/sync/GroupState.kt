@@ -39,7 +39,7 @@ object GroupState {
 
     /** Swappable so tests and future transports can drop in without touching callers. */
     var repository: RideSyncRepository = RideSyncManager(scope, listOf(NtfyTransport(scope)))
-        private set
+        internal set
 
     private val _session = MutableStateFlow<GroupSession?>(null)
     val session: StateFlow<GroupSession?> = _session.asStateFlow()
@@ -111,7 +111,17 @@ object GroupState {
         _fallDeadline.value = System.currentTimeMillis() + seconds * 1000L
     }
 
-    fun cancelFallCountdown() { _fallDeadline.value = null }
+    /**
+     * Set by the service so that dismissing a false alarm also stands the detector down.
+     * Without it "I'M OK" cleared only the deadline, the detector stayed CONFIRMED, and the
+     * very next accelerometer sample — about 200 ms later — started the countdown again.
+     */
+    var onFallDismissed: (() -> Unit)? = null
+
+    fun cancelFallCountdown() {
+        _fallDeadline.value = null
+        onFallDismissed?.invoke()
+    }
 
     /** Fires the alert if the countdown ran out. Returns true when an alert went out. */
     fun fireFallIfElapsed(): Boolean {
@@ -131,8 +141,12 @@ object GroupState {
                     is RideEvent.RouteChunk -> {
                         val done = assembler.accept(event)
                         if (done != null) {
-                            _sharedRoute.value = done.first
                             _sharedRouteFrom.value = done.second
+                            // Null first: a StateFlow swallows a value equal to the one it
+                            // already holds, so re-pushing the identical route — exactly what a
+                            // leader does when someone joins late — reached nobody.
+                            _sharedRoute.value = null
+                            _sharedRoute.value = done.first
                             _routeProgress.value = null
                         } else {
                             _routeProgress.value = assembler.progress()
@@ -169,6 +183,18 @@ object GroupState {
     /** Lets the UI start and stop the foreground service that carries a group ride. */
     var onSessionChanged: ((Boolean) -> Unit)? = null
 
+    /**
+     * A join link scanned from a leader's QR, waiting for the group screen to act on it.
+     * Held here rather than passed through the activity because the scan can arrive while the
+     * app is already open on any tab.
+     */
+    private val _pendingJoin = MutableStateFlow<Wire.JoinLink?>(null)
+    val pendingJoin: StateFlow<Wire.JoinLink?> = _pendingJoin.asStateFlow()
+
+    fun offerJoinLink(link: Wire.JoinLink) { _pendingJoin.value = link }
+
+    fun consumeJoinLink() { _pendingJoin.value = null }
+
     suspend fun start(joinCode: String, name: String, role: RiderRole) {
         val s = GroupSession(Wire.normaliseCode(joinCode), Wire.newRiderId(), name, role)
         _session.value = s
@@ -180,7 +206,6 @@ object GroupState {
         _routeProgress.value = null
         assembler.clear()
         onSessionChanged?.invoke(false)
-        _joinState.value = JoinState.IDLE
         lastPublishAt = 0L
         lastPublished = null
         repository.join(s.joinCode, me(s, batteryPct = 100))
@@ -201,7 +226,7 @@ object GroupState {
             kotlinx.coroutines.delay(500)
         }
         if (_joinState.value == JoinState.SEARCHING) {
-            _joinState.value = JoinState.NOT_FOUND
+            // stop() tears the session down; the state survives it so the UI can say why.
             stop()
             _joinState.value = JoinState.NOT_FOUND
         }
@@ -211,6 +236,11 @@ object GroupState {
         repository.leave()
         _session.value = null
         _trails.value = emptyMap()
+        assembler.clear()
+        _routeProgress.value = null
+        // Without this the foreground service keeps GPS, the accelerometer and its notification
+        // running for the rest of the day: start() turns it on and nothing else turned it off.
+        onSessionChanged?.invoke(false)
     }
 
     private fun me(s: GroupSession, batteryPct: Int): RiderPing {
@@ -335,4 +365,5 @@ val PRESET_MESSAGES = listOf(
     "Go ahead without me",
     "Catching up",
     "Hazard ahead",
+    "Police ahead",
 )

@@ -29,6 +29,11 @@ jobs:
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug
 
+      - name: Build release APK
+        # Only the release variant runs lintVitalRelease, so without this a fatal
+        # lint error reaches main and fails release.yml instead of the PR.
+        run: ./gradlew --no-daemon assembleRelease
+
       - name: Upload test report on failure
         if: failure()
         uses: actions/upload-artifact@v4

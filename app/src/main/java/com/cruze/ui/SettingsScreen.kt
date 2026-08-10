@@ -22,6 +22,12 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -114,17 +120,31 @@ fun SettingsScreen(versionName: String) {
         }
 
         item {
+            var relayText by remember { mutableStateOf(Settings.relayUrl) }
+            LaunchedEffect(relayText) {
+                delay(600)
+                if (relayText.trim().trimEnd('/') != Settings.relayUrl) {
+                    Settings.updateRelayUrl(relayText)
+                }
+            }
             OutlinedTextField(
-                value = Settings.relayUrl,
-                onValueChange = { Settings.updateRelayUrl(it) },
+                value = relayText,
+                // Normalising on every keystroke made the field unusable: trimEnd('/') ate the
+                // slashes of "https://" as they were typed. Keep what the rider types, and
+                // clean it up only once they stop.
+                onValueChange = { relayText = it },
                 label = { Text("Group relay server") },
+                placeholder = { Text("Automatic", maxLines = 1) },
                 supportingText = {
                     Text(
-                        if (Settings.relayUrl == Settings.DEFAULT_RELAY)
-                            "Free public relay. It rate-limits how often positions can be sent, " +
-                                "so a large group may see delayed updates. Point this at your " +
-                                "own ntfy server to remove that limit."
-                        else "Using your own relay.",
+                        if (Settings.usingPublicRelay)
+                            "Leave blank to use ${Settings.PUBLIC_RELAYS.size} free public " +
+                                "relays together, so the ride survives one going down. Enter " +
+                                "your own ntfy server to use only that — everyone in the group " +
+                                "must set the same one."
+                        else "Using only your relay. Everyone in the group must set this same " +
+                            "address, or they will not see each other. Clear it to go back to " +
+                            "the public relays.",
                         fontSize = 11.sp,
                     )
                 },
@@ -166,7 +186,7 @@ fun SettingsScreen(versionName: String) {
                         "Routing by Valhalla (FOSSGIS). Maps © OpenStreetMap contributors, " +
                             "© CARTO, © OpenTopoMap, Esri. Search by Nominatim. Radar by " +
                             "RainViewer. Warnings by the US National Weather Service. Group " +
-                            "position relay by ntfy.sh.",
+                            "position relay by public ntfy servers.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp),

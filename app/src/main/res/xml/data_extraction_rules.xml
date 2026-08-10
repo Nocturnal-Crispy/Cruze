@@ -3,11 +3,9 @@
     <cloud-backup>
         <include domain="file" path="garage.json" />
         <include domain="file" path="tracks/" />
-        <exclude domain="file" path="osmdroid/" />
     </cloud-backup>
     <device-transfer>
         <include domain="file" path="garage.json" />
         <include domain="file" path="tracks/" />
-        <exclude domain="file" path="osmdroid/" />
     </device-transfer>
 </data-extraction-rules>

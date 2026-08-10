@@ -67,7 +67,11 @@ object Weather {
             val seen = LinkedHashMap<String, Alert>()
             points.forEach { p ->
                 runCatching {
-                    val url = "$NWS/alerts/active?point=${"%.4f".format(p.lat)},${"%.4f".format(p.lon)}"
+                    // Locale.ROOT, not the default: on a phone set to a comma-decimal locale
+                    // this formatted "41,4021" and the request came back rejected, so severe
+                    // weather warnings silently never appeared for those riders.
+                    val url = "$NWS/alerts/active?point=" +
+                        "%.4f,%.4f".format(java.util.Locale.ROOT, p.lat, p.lon)
                     val features = JSONObject(get(url)).optJSONArray("features") ?: JSONArray()
                     for (i in 0 until features.length()) {
                         val props = features.getJSONObject(i).optJSONObject("properties") ?: continue

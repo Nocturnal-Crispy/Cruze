@@ -1,5 +1,6 @@
 package com.cruze
 
+import android.content.Intent
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -55,6 +56,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cruze.Settings
+import com.cruze.speedUnit
 import com.cruze.data.SavedTrack
 import com.cruze.garage.GarageViewModel
 import com.cruze.nav.LocationSource
@@ -62,6 +64,7 @@ import com.cruze.service.RideService
 import com.cruze.ui.AppViewModel
 import com.cruze.ui.CruzeTheme
 import com.cruze.sync.GroupState
+import com.cruze.sync.Wire
 import com.cruze.ui.FallCountdownOverlay
 import com.cruze.ui.GarageScreen
 import com.cruze.ui.GroupScreen
@@ -83,11 +86,32 @@ class MainActivity : ComponentActivity() {
         initOsmdroid(this)
         location = LocationSource(this)
         Settings.load(this)
+        handleJoinLink(intent)
         setContent {
             CruzeTheme(dark = Settings.darkTheme) {
                 App(onPermissionGranted = { location.start() })
             }
         }
+    }
+
+    // singleTop, so a scan while the app is already open arrives here rather than in onCreate.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleJoinLink(intent)
+    }
+
+    /**
+     * A scanned join QR carries the leader's relay as well as the code. Riders on different
+     * relays are invisible to each other, so the relay is applied before the join — that is the
+     * whole reason it travels in the link.
+     */
+    private fun handleJoinLink(intent: Intent?) {
+        val link = Wire.parseJoinLink(intent?.dataString.orEmpty()) ?: return
+        if (link.relay.isNotBlank() && link.relay != Settings.relayUrl) {
+            Settings.updateRelayUrl(link.relay)
+        }
+        GroupState.offerJoinLink(link)
     }
 
     override fun onResume() {

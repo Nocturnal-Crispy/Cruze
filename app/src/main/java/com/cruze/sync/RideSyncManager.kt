@@ -2,6 +2,7 @@ package com.cruze.sync
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -15,6 +16,9 @@ const val ROSTER_STALE_MS = 150_000L
 
 /** How many offline breadcrumbs to hold before thinning the oldest away. */
 const val TRAIL_BUFFER = 600
+
+/** How often the roster is aged and the unsent queue retried, independent of incoming traffic. */
+const val HOUSEKEEPING_MS = 15_000L
 
 /**
  * Routes group traffic over whichever transport is alive, newest-preferred, and holds on to
@@ -72,7 +76,28 @@ class RideSyncManager(
             }
             t.connect(topic)
         }
+
+        // A heartbeat, because two things used to happen only as a side effect of traffic
+        // arriving: the roster aged out stale riders solely inside ingest(), so a rider who
+        // rode out of signal stayed pinned to their last position forever if nobody else was
+        // moving; and the queue was drained only on a transport *transition*, so an alert or
+        // route chunk rejected by a rate limit sat unsent until the connection happened to
+        // flap. Neither can be left to chance on a ride.
+        jobs += scope.launch {
+            while (true) {
+                delay(HOUSEKEEPING_MS)
+                ageRoster()
+                if (_status.value.connected) flush()
+            }
+        }
         recomputeStatus()
+    }
+
+    /** Drops riders nobody has heard from in a while, whether or not anything else arrived. */
+    private fun ageRoster() {
+        val now = System.currentTimeMillis()
+        val fresh = _roster.value.filter { now - it.atMs < ROSTER_STALE_MS }
+        if (fresh.size != _roster.value.size) _roster.value = fresh
     }
 
     override suspend fun leave() {
@@ -147,6 +172,11 @@ class RideSyncManager(
         when (event) {
             is RideEvent.Position -> {
                 val now = System.currentTimeMillis()
+                val known = _roster.value.firstOrNull { it.riderId == event.ping.riderId }
+                // A rider coming out of a dead zone flushes their whole backlog at once, so
+                // pings arrive out of order. Taking whichever landed last dragged their marker
+                // backwards along the road and could age them straight off the roster.
+                if (known != null && known.atMs > event.ping.atMs) return
                 val others = _roster.value.filterNot { it.riderId == event.ping.riderId }
                 _roster.value = (others + event.ping)
                     .filter { now - it.atMs < ROSTER_STALE_MS }

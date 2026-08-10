@@ -85,39 +85,66 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
     private val fallDetector = FallDetector()
     private var sensors: android.hardware.SensorManager? = null
     private var lastTiltDeg = 0f
-    private var lastSpokenMessageAt = 0L
-    private var lastSpokenAlertAt = 0L
+    /**
+     * What has already been read out, identified by sender and content rather than by a
+     * timestamp high-water mark: riders' clocks disagree, and a message from a phone running a
+     * minute behind is still a message. Bounded, because a long ride would otherwise grow it.
+     */
+    private val spoken = object : LinkedHashSet<String>() {
+        override fun add(element: String): Boolean {
+            val fresh = super.add(element)
+            while (size > 200) iterator().let { it.next(); it.remove() }
+            return fresh
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         // Everything the group says is spoken. A rider must never have to read at speed.
+        // Speak everything not yet spoken, not just the newest.
+        //
+        // This used to keep a single high-water timestamp and skip anything not newer than it.
+        // Two riders' phone clocks are never in step, so one rider whose clock ran a minute
+        // behind was silently muted for the whole ride — and two messages arriving together
+        // collapsed into one, because only the last of the list was ever read.
         scope.launch {
             GroupState.messages.collect { list ->
-                val latest = list.lastOrNull() ?: return@collect
-                if (latest.atMs > lastSpokenMessageAt) {
-                    lastSpokenMessageAt = latest.atMs
-                    speaker?.say("${latest.name} says ${latest.message}")
+                list.forEach { m ->
+                    if (spoken.add(m.riderId + "/" + m.atMs + "/" + m.message)) {
+                        speaker?.say("${m.name} says ${m.message}")
+                    }
                 }
             }
         }
         scope.launch {
             GroupState.alerts.collect { list ->
-                val latest = list.lastOrNull() ?: return@collect
-                if (latest.atMs > lastSpokenAlertAt) {
-                    lastSpokenAlertAt = latest.atMs
-                    val what = latest.kind.name.replace('_', ' ').lowercase()
-                    speaker?.say("Alert. ${latest.name}: $what.")
+                list.forEach { a ->
+                    if (spoken.add(a.riderId + "/" + a.atMs + "/" + a.kind.name)) {
+                        val what = a.kind.name.replace('_', ' ').lowercase()
+                        speaker?.say("Alert. ${a.name}: $what.")
+                    }
                 }
             }
         }
+        // "I'M OK" must stand the detector down too, not just hide the countdown.
+        GroupState.onFallDismissed = { fallDetector.reset() }
         lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         sensors = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
         createChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // The permission has to be checked BEFORE going foreground, not after. This service is
+        // declared foregroundServiceType="location", and from Android 14 the system throws
+        // rather than starting one while location is denied — which crashed the app on the very
+        // first tap of "Start a ride" for anyone who had said no to the permission prompt.
+        if (!hasLocationPermission()) {
+            RideState.setStatus("Location permission is required for rides.")
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startForeground(NOTIF_ID, buildNotification())
 
         when (intent?.action) {
@@ -156,10 +183,14 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
         return START_STICKY
     }
 
+    private fun hasLocationPermission() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
     private fun startLocation() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!hasLocationPermission()) {
             RideState.setStatus("Location permission is required.")
             stopEverything()
             return
@@ -340,6 +371,7 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
     }
 
     override fun onDestroy() {
+        GroupState.onFallDismissed = null
         runCatching { lm.removeUpdates(this) }
         runCatching { sensors?.unregisterListener(this) }
         speaker?.release()

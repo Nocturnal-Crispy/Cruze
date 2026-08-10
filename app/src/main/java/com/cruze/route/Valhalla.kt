@@ -75,7 +75,14 @@ object Valhalla {
         if (clean.isNotEmpty()) return pickBest(clean.map { it.first }, style) ?: best
 
         // Nothing is fully paved: take whichever has the least dirt rather than failing.
-        return scored.minByOrNull { (_, r) -> r.unpavedFraction }?.first ?: best
+        //
+        // The incumbent is in this comparison. Leaving it out meant the route we had just
+        // measured — and knew the exact dirt fraction of — was discarded in favour of an
+        // alternative that could easily be dirtier. And a candidate that could not be measured
+        // at all is excluded rather than scoring 0.0, which used to let an unverifiable route
+        // win the least-dirt contest outright.
+        val measured = (scored + (best to report)).filter { (_, r) -> r.checked }
+        return measured.minByOrNull { (_, r) -> r.unpavedFraction }?.first ?: best
     }
 
     /**
@@ -119,9 +126,14 @@ object Valhalla {
             }.flatMap { it.await() }
         }
         if (candidates.isEmpty()) throw ServiceException("Could not build a round trip from here.")
+        val alive = dedupe(candidates)
+        val best = pickBest(alive, style) ?: throw ServiceException("No usable round trip found.")
+        // Loops get the same surface verification as any other route. They used to skip it
+        // entirely, which is backwards: a loop is shaped by via points chosen by us, off the
+        // direct line, so it is the route most likely to be sent down a farm track.
+        val paved = if (Settings.avoidUnpaved) avoidGravel(best, alive, style) else best
         // Report the rider's own points, not the via points invented to shape the loop.
-        return (pickBest(dedupe(candidates), style) ?: throw ServiceException("No usable round trip found."))
-            .copy(waypoints = waypoints + start)
+        return paved.copy(waypoints = waypoints + start)
     }
 
     private fun fetch(waypoints: List<Waypoint>, style: RouteStyle, useHighways: Double): List<RoutePlan> {

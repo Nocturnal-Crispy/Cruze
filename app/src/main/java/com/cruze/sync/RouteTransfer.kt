@@ -117,10 +117,16 @@ object RouteTransfer {
         private val partsByRoute = HashMap<String, HashMap<Int, String>>()
         private val expected = HashMap<String, Int>()
         private val names = HashMap<String, String>()
+        private val startedAt = HashMap<String, Long>()
+
+        /** A transfer missing a chunk this long is never completing; it is abandoned. */
+        private val staleAfterMs = 120_000L
 
         /** Returns the finished plan once the last missing chunk lands, else null. */
         fun accept(chunk: RideEvent.RouteChunk): Pair<RoutePlan, String>? {
             if (chunk.count <= 0 || chunk.index !in 0 until chunk.count) return null
+            dropStale()
+            startedAt.getOrPut(chunk.routeId) { System.currentTimeMillis() }
             val parts = partsByRoute.getOrPut(chunk.routeId) { HashMap() }
             parts[chunk.index] = chunk.payload
             expected[chunk.routeId] = chunk.count
@@ -131,23 +137,39 @@ object RouteTransfer {
             // Only trust a route whose bytes hash to what the sender said they would.
             if (hashOf(payload) != chunk.routeId) {
                 partsByRoute.remove(chunk.routeId)
+                startedAt.remove(chunk.routeId)
                 return null
             }
             val plan = runCatching { planFromJson(payload) }.getOrNull() ?: return null
             partsByRoute.remove(chunk.routeId)
             expected.remove(chunk.routeId)
+            startedAt.remove(chunk.routeId)
             return plan to names.remove(chunk.routeId).orEmpty()
         }
 
-        /** Fraction received of the transfer currently in flight, for a progress readout. */
+        /**
+         * Fraction received of the transfer currently in flight, for a progress readout.
+         *
+         * Returns 1f — meaning "nothing in flight" — once a stalled transfer has been given up
+         * on. Without that, a single chunk lost to a dead zone left the receiving rider staring
+         * at a loading card stuck at two thirds for the rest of the ride.
+         */
         fun progress(): Float {
+            dropStale()
             val id = partsByRoute.keys.firstOrNull() ?: return 1f
             val total = expected[id] ?: return 1f
             return (partsByRoute[id]?.size ?: 0).toFloat() / total
         }
 
+        private fun dropStale() {
+            val cutoff = System.currentTimeMillis() - staleAfterMs
+            startedAt.filterValues { it < cutoff }.keys.forEach { id ->
+                partsByRoute.remove(id); expected.remove(id); names.remove(id); startedAt.remove(id)
+            }
+        }
+
         fun clear() {
-            partsByRoute.clear(); expected.clear(); names.clear()
+            partsByRoute.clear(); expected.clear(); names.clear(); startedAt.clear()
         }
     }
 }

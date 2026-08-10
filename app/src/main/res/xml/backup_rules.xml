@@ -3,5 +3,4 @@
 <full-backup-content>
     <include domain="file" path="garage.json" />
     <include domain="file" path="tracks/" />
-    <exclude domain="file" path="osmdroid/" />
 </full-backup-content>

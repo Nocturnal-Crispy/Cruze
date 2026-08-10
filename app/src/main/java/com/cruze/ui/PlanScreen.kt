@@ -104,8 +104,12 @@ fun PlanScreen(
     }
 
     // Frame the whole route the moment one is found, and surface the sheet with the result.
-    LaunchedEffect(vm.plan) {
-        vm.plan?.let { mapRef?.zoomTo(it.shape, padding = 240); sheetVisible = true }
+    // Keyed on the map too: a route that arrived while this screen was away (the leader pushing
+    // one, say) is already set by the time the map exists, so waiting on the plan alone never
+    // frames it and the rider is left looking at wherever they were before.
+    LaunchedEffect(vm.plan, mapRef) {
+        val map = mapRef ?: return@LaunchedEffect
+        vm.plan?.let { map.zoomTo(it.shape, padding = 240); sheetVisible = true }
     }
     LaunchedEffect(vm.waypoints.size) { if (vm.waypoints.isNotEmpty()) sheetVisible = true }
 
@@ -192,7 +196,7 @@ fun PlanScreen(
             exit = slideOutVertically { it },
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
-            Sheet(vm, onStartNavigation, onExport, onImport) { mapRef }
+            Sheet(vm, onStartNavigation, onExport, onImport, onCollapse = { sheetVisible = false }) { mapRef }
         }
 
         // With the sheet hidden, this is the only way back to it.
@@ -353,6 +357,7 @@ private fun Sheet(
     onStartNavigation: () -> Unit,
     onExport: () -> Unit,
     onImport: () -> Unit,
+    onCollapse: () -> Unit,
     map: () -> MapView?,
 ) {
     Surface(
@@ -361,13 +366,17 @@ private fun Sheet(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            // The grab handle is the obvious place to press to get the sheet out of the way,
+            // so give it a glove-sized strip to press rather than a 4 dp bar.
+            Box(
+                Modifier.fillMaxWidth().height(34.dp).clickable(onClick = onCollapse),
+                contentAlignment = Alignment.Center,
+            ) {
                 Box(
                     Modifier.width(38.dp).height(4.dp)
                         .background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp))
                 )
             }
-            Spacer(Modifier.height(12.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 RouteStyle.entries.forEach { s ->
