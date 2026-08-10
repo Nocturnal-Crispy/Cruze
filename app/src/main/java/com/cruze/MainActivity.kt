@@ -56,6 +56,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cruze.Settings
+import com.cruze.speedUnit
 import com.cruze.data.SavedTrack
 import com.cruze.garage.GarageViewModel
 import com.cruze.nav.LocationSource

@@ -22,6 +22,12 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -114,9 +120,19 @@ fun SettingsScreen(versionName: String) {
         }
 
         item {
+            var relayText by remember { mutableStateOf(Settings.relayUrl) }
+            LaunchedEffect(relayText) {
+                delay(600)
+                if (relayText.trim().trimEnd('/') != Settings.relayUrl) {
+                    Settings.updateRelayUrl(relayText)
+                }
+            }
             OutlinedTextField(
-                value = Settings.relayUrl,
-                onValueChange = { Settings.updateRelayUrl(it) },
+                value = relayText,
+                // Normalising on every keystroke made the field unusable: trimEnd('/') ate the
+                // slashes of "https://" as they were typed. Keep what the rider types, and
+                // clean it up only once they stop.
+                onValueChange = { relayText = it },
                 label = { Text("Group relay server") },
                 placeholder = { Text("Automatic", maxLines = 1) },
                 supportingText = {
