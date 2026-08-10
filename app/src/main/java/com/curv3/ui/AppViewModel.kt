@@ -12,7 +12,6 @@ import com.curv3.Fix
 import com.curv3.LatLon
 import com.curv3.RideState
 import com.curv3.data.Gpx
-import com.curv3.data.SavedRoute
 import com.curv3.data.SavedTrack
 import com.curv3.data.Store
 import com.curv3.route.Nominatim
@@ -22,6 +21,7 @@ import com.curv3.route.RouteStyle
 import com.curv3.route.Valhalla
 import com.curv3.route.Waypoint
 import com.curv3.service.RideService
+import com.curv3.weather.Weather
 import com.curv3.metresToMiles
 import com.curv3.trackDistanceM
 import kotlinx.coroutines.Job
@@ -43,6 +43,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var mapLayer by mutableStateOf(MapLayer.DARK)
         private set
+
+    var radarOn by mutableStateOf(false)
+        private set
+    var radarFrame by mutableStateOf<String?>(null)
+        private set
+    var alerts by mutableStateOf<List<Weather.Alert>>(emptyList())
+        private set
     var plan by mutableStateOf<RoutePlan?>(null)
         private set
     var busy by mutableStateOf(false)
@@ -53,8 +60,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var searching by mutableStateOf(false)
         private set
 
-    var routes by mutableStateOf<List<SavedRoute>>(emptyList())
-        private set
     var tracks by mutableStateOf<List<SavedTrack>>(emptyList())
         private set
 
@@ -106,6 +111,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setLayer(l: MapLayer) { mapLayer = l }
 
+    /** Toggles the rain radar, refetching frame paths since RainViewer rotates them often. */
+    fun toggleRadar() {
+        radarOn = !radarOn
+        if (!radarOn) {
+            radarFrame = null
+            return
+        }
+        viewModelScope.launch {
+            runCatching { Weather.radarFrames() }
+                .onSuccess { frames ->
+                    // The newest frame at or before now is the current picture of the sky.
+                    val now = System.currentTimeMillis()
+                    radarFrame = (frames.lastOrNull { it.timeMs <= now } ?: frames.lastOrNull())?.path
+                    if (radarFrame == null) message = "No radar data available right now."
+                }
+                .onFailure {
+                    radarOn = false
+                    message = "Could not load rain radar."
+                }
+        }
+    }
+
+    /** Weather warnings along the planned route. Silent on failure — it is advisory only. */
+    private fun refreshAlerts(shape: List<LatLon>) = viewModelScope.launch {
+        alerts = runCatching { Weather.alertsAlong(shape) }.getOrDefault(emptyList())
+    }
+
     /** Labels a map-tapped point in the background; a failed lookup is not worth an error. */
     private fun nameLast(p: LatLon) = viewModelScope.launch {
         val label = runCatching { Nominatim.reverse(p) }.getOrNull() ?: return@launch
@@ -130,6 +162,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         waypoints = emptyList()
         plan = null
         searchResults = emptyList()
+        alerts = emptyList()
     }
 
     fun chooseStyle(s: RouteStyle) {
@@ -154,6 +187,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 .onSuccess {
                     plan = it
                     RideState.setPlan(it)
+                    refreshAlerts(it.shape)
                 }
                 .onFailure { message = it.message ?: "Could not plan a route." }
             busy = false
@@ -189,7 +223,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startRecording(ctx: Context) = RideService.send(ctx, RideService.ACTION_START_RECORD)
 
-    fun stopRecordingAndSave(ctx: Context) {
+    fun stopRecordingAndSave(ctx: Context, onDistanceRidden: (Double) -> Unit = {}) {
         val points = RideState.track.value
         RideService.send(ctx, RideService.ACTION_STOP_RECORD)
         if (points.size < 2) {
@@ -197,25 +231,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         saveTrack(points)
+        onDistanceRidden(com.curv3.trackDistanceM(points))
     }
 
     // --- library ---------------------------------------------------------------------------
 
     fun refreshLibrary() {
-        routes = runCatching { store.listRoutes() }.getOrDefault(emptyList())
         tracks = runCatching { store.listTracks() }.getOrDefault(emptyList())
-    }
-
-    fun saveCurrentRoute() {
-        val p = plan ?: run { message = "Plan a route first."; return }
-        val name = p.waypoints.let { w ->
-            val from = w.first().name.substringBefore(",").ifBlank { "Start" }
-            val to = w.last().name.substringBefore(",").ifBlank { "Finish" }
-            "$from → $to"
-        }
-        store.saveRoute(SavedRoute(UUID.randomUUID().toString(), name, System.currentTimeMillis(), p))
-        refreshLibrary()
-        message = "Saved “$name”."
     }
 
     private fun saveTrack(points: List<Fix>) {
@@ -227,20 +249,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         message = "Ride saved."
     }
 
-    fun openRoute(r: SavedRoute) {
-        plan = r.plan
-        waypoints = r.plan.waypoints
-        style = r.plan.style
-        RideState.setPlan(r.plan)
-    }
-
-    fun deleteRoute(r: SavedRoute) { store.deleteRoute(r.id); refreshLibrary() }
     fun deleteTrack(t: SavedTrack) { store.deleteTrack(t.id); refreshLibrary() }
 
     // --- GPX -------------------------------------------------------------------------------
-
-    fun exportRoute(ctx: Context, r: SavedRoute, target: Uri) =
-        write(ctx, target, Gpx.writeRoute(r.plan, r.name), "Route exported.")
 
     fun exportCurrentPlan(ctx: Context, target: Uri) {
         val p = plan ?: return

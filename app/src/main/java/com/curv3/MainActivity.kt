@@ -10,18 +10,26 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.Map
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Route
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarDefaults
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -32,21 +40,26 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.curv3.data.SavedRoute
 import com.curv3.data.SavedTrack
+import com.curv3.garage.GarageViewModel
 import com.curv3.nav.LocationSource
-import com.curv3.service.RideService
 import com.curv3.ui.AppViewModel
+import com.curv3.ui.Curv3Theme
+import com.curv3.ui.GarageScreen
+import com.curv3.ui.GloveTarget
 import com.curv3.ui.NavScreen
 import com.curv3.ui.PlanScreen
-import com.curv3.ui.Curv3Theme
 import com.curv3.ui.RidesScreen
 import com.curv3.ui.initOsmdroid
 
@@ -77,18 +90,27 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab(val label: String) { PLAN("Plan"), RIDE("Ride"), LIBRARY("Rides") }
+private enum class Tab(val label: String, val icon: ImageVector) {
+    MAP("Map", Icons.Default.Map),
+    RIDE("Ride", Icons.Default.PlayArrow),
+    RIDES("Rides", Icons.Default.Route),
+    GARAGE("Garage", Icons.Default.DirectionsBike),
+}
 
 @Composable
-private fun App(vm: AppViewModel = viewModel(), onPermissionGranted: () -> Unit = {}) {
+private fun App(
+    vm: AppViewModel = viewModel(),
+    garage: GarageViewModel = viewModel(),
+    onPermissionGranted: () -> Unit = {},
+) {
     val ctx = LocalContext.current
     val navigating by RideState.navigating.collectAsStateWithLifecycle()
     val recording by RideState.recording.collectAsStateWithLifecycle()
     val status by RideState.status.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
-    var tab by remember { mutableStateOf(Tab.PLAN) }
+    var tab by remember { mutableStateOf(Tab.MAP) }
     var hasLocation by remember { mutableStateOf(ctx.hasLocationPermission()) }
-    var pendingExport by remember { mutableStateOf<((Uri) -> Unit)?>(null) }
+    var pendingWrite by remember { mutableStateOf<((Uri) -> Unit)?>(null) }
 
     val permissions = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -110,45 +132,46 @@ private fun App(vm: AppViewModel = viewModel(), onPermissionGranted: () -> Unit 
         }
     }
 
-    // Surface one-off messages from either the view model or the service.
     LaunchedEffect(vm.message) { vm.message?.let { snackbar.showSnackbar(it); vm.message = null } }
-    LaunchedEffect(status) { if (status.isNotBlank()) { snackbar.showSnackbar(status); RideState.setStatus("") } }
+    LaunchedEffect(garage.message) { garage.message?.let { snackbar.showSnackbar(it); garage.message = null } }
+    LaunchedEffect(status) {
+        if (status.isNotBlank()) { snackbar.showSnackbar(status); RideState.setStatus("") }
+    }
 
     // Jump straight to the riding view whenever guidance starts.
     LaunchedEffect(navigating) { if (navigating) tab = Tab.RIDE }
 
-    val createGpx = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/gpx+xml")
-    ) { uri -> uri?.let { pendingExport?.invoke(it) }; pendingExport = null }
+    val createFile = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri -> uri?.let { pendingWrite?.invoke(it) }; pendingWrite = null }
 
     val openGpx = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { vm.importGpx(ctx, it) }
     }
 
-    fun export(name: String, writer: (Uri) -> Unit) {
-        pendingExport = writer
-        createGpx.launch("$name.gpx")
+    fun saveAs(name: String, writer: (Uri) -> Unit) {
+        pendingWrite = writer
+        createFile.launch(name)
     }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                tonalElevation = NavigationBarDefaults.Elevation,
+            ) {
                 Tab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t,
                         onClick = { tab = t },
-                        icon = {
-                            Icon(
-                                when (t) {
-                                    Tab.PLAN -> Icons.Default.Map
-                                    Tab.RIDE -> Icons.Default.FiberManualRecord
-                                    Tab.LIBRARY -> Icons.Default.Menu
-                                },
-                                contentDescription = t.label,
-                            )
-                        },
-                        label = { Text(t.label) },
+                        icon = { Icon(t.icon, contentDescription = t.label) },
+                        label = { Text(t.label, fontSize = 11.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primary,
+                        ),
                     )
                 }
             }
@@ -166,11 +189,15 @@ private fun App(vm: AppViewModel = viewModel(), onPermissionGranted: () -> Unit 
                 }
             }
             when (tab) {
-                Tab.PLAN -> PlanScreen(
+                Tab.MAP -> PlanScreen(
                     vm = vm,
                     onStartNavigation = { vm.startNavigation(ctx) },
-                    onExport = { export("curv3-route") { uri -> vm.exportCurrentPlan(ctx, uri) } },
-                    onImport = { openGpx.launch(arrayOf("application/gpx+xml", "application/xml", "text/xml", "*/*")) },
+                    onExport = { saveAs("curv3-route.gpx") { uri -> vm.exportCurrentPlan(ctx, uri) } },
+                    onImport = {
+                        openGpx.launch(
+                            arrayOf("application/gpx+xml", "application/xml", "text/xml", "*/*")
+                        )
+                    },
                 )
 
                 Tab.RIDE -> if (navigating) {
@@ -179,17 +206,28 @@ private fun App(vm: AppViewModel = viewModel(), onPermissionGranted: () -> Unit 
                     RideIdle(
                         recording = recording,
                         onStartRecording = { vm.startRecording(ctx) },
-                        onStopRecording = { vm.stopRecordingAndSave(ctx) },
-                        onPlan = { tab = Tab.PLAN },
+                        // A finished ride adds its miles to the bike it was ridden on.
+                        onStopRecording = {
+                            vm.stopRecordingAndSave(ctx) { metres -> garage.addRideDistance(metres) }
+                        },
+                        onPlan = { tab = Tab.MAP },
                     )
                 }
 
-                Tab.LIBRARY -> RidesScreen(
-                    vm = vm,
-                    onOpenRoute = { r: SavedRoute -> vm.openRoute(r); tab = Tab.PLAN },
-                    onExportRoute = { r: SavedRoute -> export(r.name.safe()) { uri -> vm.exportRoute(ctx, r, uri) } },
-                    onExportTrack = { t: SavedTrack -> export(t.name.safe()) { uri -> vm.exportTrack(ctx, t, uri) } },
-                )
+                Tab.RIDES -> RidesScreen(vm) { t: SavedTrack ->
+                    saveAs("${t.name.safe()}.gpx") { uri -> vm.exportTrack(ctx, t, uri) }
+                }
+
+                Tab.GARAGE -> GarageScreen(garage) {
+                    saveAs("curv3-fuel-log.csv") { uri ->
+                        runCatching {
+                            ctx.contentResolver.openOutputStream(uri)?.use {
+                                it.write(garage.fuelCsv().toByteArray())
+                            }
+                        }.onSuccess { garage.message = "Fuel log exported." }
+                            .onFailure { garage.message = "Export failed: ${it.message}" }
+                    }
+                }
             }
         }
     }
@@ -199,7 +237,9 @@ private fun App(vm: AppViewModel = viewModel(), onPermissionGranted: () -> Unit 
 private fun PermissionPrompt(onGrant: () -> Unit) {
     Column(Modifier.padding(16.dp)) {
         Text("Curv3 needs location access to plan from where you are, guide you, and record rides.")
-        Button(onClick = onGrant, modifier = Modifier.padding(top = 8.dp)) { Text("Grant location access") }
+        Button(onClick = onGrant, modifier = Modifier.padding(top = 8.dp)) {
+            Text("Grant location access")
+        }
     }
 }
 
@@ -211,19 +251,58 @@ private fun RideIdle(
     onPlan: () -> Unit,
 ) {
     val track by RideState.track.collectAsStateWithLifecycle()
-    Column(Modifier.fillMaxSize().padding(20.dp)) {
-        Text("No navigation running.", style = MaterialTheme.typography.titleMedium)
-        Button(onClick = onPlan, modifier = Modifier.padding(top = 12.dp)) { Text("Plan a route") }
+    val fix by RideState.fix.collectAsStateWithLifecycle()
 
-        Text(
-            if (recording) "Recording: ${fmtDist(trackDistanceM(track))} over ${track.size} points"
-            else "Record a ride without a route — just go and log the track.",
-            modifier = Modifier.padding(top = 28.dp),
-        )
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (recording) {
+            Text(
+                fmtDist(trackDistanceM(track)),
+                fontSize = 52.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text("recording · ${track.size} points", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "${fmtSpeed(fix?.speedMps ?: 0f)} mph",
+                fontSize = 20.sp,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        } else {
+            Text("Ready to ride", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "Record a ride on its own, or plan a route and get voice guidance.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+
         Button(
             onClick = { if (recording) onStopRecording() else onStartRecording() },
-            modifier = Modifier.padding(top = 8.dp),
-        ) { Text(if (recording) "Stop and save ride" else "Start recording") }
+            modifier = Modifier.fillMaxWidth().height(GloveTarget).padding(top = 28.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = if (recording) {
+                ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            } else ButtonDefaults.buttonColors(),
+        ) { Text(if (recording) "Stop and save ride" else "Start recording", fontSize = 17.sp) }
+
+        if (!recording) {
+            Button(
+                onClick = onPlan,
+                modifier = Modifier.fillMaxWidth().height(GloveTarget).padding(top = 10.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ),
+            ) { Text("Plan a route", fontSize = 17.sp) }
+        }
     }
 }
 
@@ -232,6 +311,3 @@ private fun android.content.Context.hasLocationPermission() =
         PackageManager.PERMISSION_GRANTED
 
 private fun String.safe() = replace(Regex("[^A-Za-z0-9 _-]"), "").trim().ifBlank { "curv3" }
-
-@Suppress("unused")
-private val keepServiceImport = RideService::class

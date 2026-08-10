@@ -1,6 +1,10 @@
 package com.curv3.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +27,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Search
@@ -49,7 +56,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -73,6 +83,10 @@ fun PlanScreen(
     var query by remember { mutableStateOf("") }
     var mapRef by remember { mutableStateOf<MapView?>(null) }
     var followedOnce by remember { mutableStateOf(false) }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
+    // Tapping the map gets the planning sheet out of the way so the road is visible.
+    var sheetVisible by remember { mutableStateOf(true) }
 
     // Open the map on the rider, once, without fighting them if they then pan away.
     LaunchedEffect(fix, mapRef) {
@@ -85,18 +99,31 @@ fun PlanScreen(
         }
     }
 
-    // Frame the whole route the moment one is found.
-    LaunchedEffect(vm.plan) { vm.plan?.let { mapRef?.zoomTo(it.shape) } }
+    // Frame the whole route the moment one is found, and surface the sheet with the result.
+    LaunchedEffect(vm.plan) {
+        vm.plan?.let { mapRef?.zoomTo(it.shape); sheetVisible = true }
+    }
+    LaunchedEffect(vm.waypoints.size) { if (vm.waypoints.isNotEmpty()) sheetVisible = true }
 
     Box(Modifier.fillMaxSize()) {
         OsmMap(
             modifier = Modifier.fillMaxSize(),
             layer = vm.mapLayer,
-            onTap = { vm.clearSearch() },
+            onTap = {
+                if (vm.searchResults.isNotEmpty()) {
+                    vm.clearSearch()
+                } else {
+                    sheetVisible = !sheetVisible
+                }
+                keyboard?.hide()
+                focus.clearFocus()
+            },
             onLongPress = { vm.addDestination(it) },
             onReady = { mapRef = it },
         ) { map ->
             map.clearDrawn()
+            val frame = vm.radarFrame
+            if (vm.radarOn && frame != null) map.showRadar(frame) else map.clearRadar()
             vm.plan?.let { map.drawRoute(it.shape) }
             vm.waypoints.forEachIndexed { i, w ->
                 val last = i == vm.waypoints.lastIndex
@@ -116,9 +143,13 @@ fun PlanScreen(
         TopControls(vm, query, onQuery = { q ->
             query = q
             vm.search(q, mapRef?.mapCenter?.let { LatLon(it.latitude, it.longitude) })
-        }, onClear = { query = ""; vm.clearSearch() }, onPick = { place ->
+        }, onClear = { query = ""; vm.clearSearch(); focus.clearFocus() }, onPick = { place ->
             vm.addDestination(place.pos, place.name.split(",").take(2).joinToString(","))
+            // Dismiss the whole search surface — it covers the map until it is cleared.
             query = ""
+            vm.clearSearch()
+            keyboard?.hide()
+            focus.clearFocus()
             mapRef?.controller?.animateTo(place.pos.geo())
         })
 
@@ -130,7 +161,38 @@ fun PlanScreen(
             },
         )
 
-        Sheet(vm, onStartNavigation, onExport, onImport) { mapRef }
+        AlertBanner(vm)
+
+        AnimatedVisibility(
+            visible = sheetVisible,
+            enter = slideInVertically { it },
+            exit = slideOutVertically { it },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            Sheet(vm, onStartNavigation, onExport, onImport) { mapRef }
+        }
+
+        // With the sheet hidden, this is the only way back to it.
+        AnimatedVisibility(
+            visible = !sheetVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            Surface(
+                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier.fillMaxWidth().clickable { sheetVisible = true },
+            ) {
+                Box(Modifier.fillMaxWidth().height(34.dp), contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.KeyboardArrowUp,
+                        "Show route planner",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -227,7 +289,12 @@ private fun BoxScope.SideControls(vm: AppViewModel, onRecentre: () -> Unit) {
                 }
             }
         }
-        RoundControl(Icons.Default.MyLocation, "Centre on me", onRecentre)
+        RoundControl(
+            Icons.Default.Cloud,
+            if (vm.radarOn) "Hide rain radar" else "Show rain radar",
+            tint = if (vm.radarOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        ) { vm.toggleRadar() }
+        RoundControl(Icons.Default.MyLocation, "Centre on me", onClick = onRecentre)
     }
 }
 
@@ -235,6 +302,7 @@ private fun BoxScope.SideControls(vm: AppViewModel, onRecentre: () -> Unit) {
 private fun RoundControl(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
+    tint: Color = Color.Unspecified,
     onClick: () -> Unit,
 ) {
     Surface(
@@ -243,13 +311,13 @@ private fun RoundControl(
         modifier = Modifier.size(GloveTarget),
     ) {
         Box(Modifier.clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-            Icon(icon, label, tint = MaterialTheme.colorScheme.onSurface)
+            Icon(icon, label, tint = if (tint == Color.Unspecified) MaterialTheme.colorScheme.onSurface else tint)
         }
     }
 }
 
 @Composable
-private fun BoxScope.Sheet(
+private fun Sheet(
     vm: AppViewModel,
     onStartNavigation: () -> Unit,
     onExport: () -> Unit,
@@ -259,7 +327,7 @@ private fun BoxScope.Sheet(
     Surface(
         shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -388,8 +456,7 @@ private fun BoxScope.Sheet(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             ) {
                 if (vm.plan != null) {
-                    Secondary("Save", Modifier.weight(1f)) { vm.saveCurrentRoute() }
-                    Secondary("GPX", Modifier.weight(1f), onExport)
+                    Secondary("Share GPX", Modifier.weight(1f), onExport)
                 }
                 if (vm.waypoints.isEmpty()) {
                     Secondary("Import GPX", Modifier.weight(1f), onImport)
@@ -407,6 +474,31 @@ private fun BoxScope.Sheet(
                 modifier = Modifier.padding(top = 6.dp),
                 maxLines = 1,
             )
+        }
+    }
+}
+
+/** Weather warnings covering the planned route. Advisory, never blocking. */
+@Composable
+private fun BoxScope.AlertBanner(vm: AppViewModel) {
+    val worst = vm.alerts.firstOrNull() ?: return
+    Surface(
+        color = if (worst.urgent) MaterialTheme.colorScheme.errorContainer
+        else MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.align(Alignment.TopStart).padding(top = 84.dp, start = 12.dp, end = 12.dp),
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error)
+            Column(Modifier.padding(start = 10.dp)) {
+                Text(worst.event, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+                Text(
+                    if (vm.alerts.size > 1) "${worst.area} · +${vm.alerts.size - 1} more" else worst.area,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
