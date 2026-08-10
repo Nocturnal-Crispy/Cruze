@@ -39,7 +39,7 @@ object GroupState {
 
     /** Swappable so tests and future transports can drop in without touching callers. */
     var repository: RideSyncRepository = RideSyncManager(scope, listOf(NtfyTransport(scope)))
-        private set
+        internal set
 
     private val _session = MutableStateFlow<GroupSession?>(null)
     val session: StateFlow<GroupSession?> = _session.asStateFlow()
@@ -180,7 +180,6 @@ object GroupState {
         _routeProgress.value = null
         assembler.clear()
         onSessionChanged?.invoke(false)
-        _joinState.value = JoinState.IDLE
         lastPublishAt = 0L
         lastPublished = null
         repository.join(s.joinCode, me(s, batteryPct = 100))
@@ -201,7 +200,7 @@ object GroupState {
             kotlinx.coroutines.delay(500)
         }
         if (_joinState.value == JoinState.SEARCHING) {
-            _joinState.value = JoinState.NOT_FOUND
+            // stop() tears the session down; the state survives it so the UI can say why.
             stop()
             _joinState.value = JoinState.NOT_FOUND
         }
@@ -335,4 +334,5 @@ val PRESET_MESSAGES = listOf(
     "Go ahead without me",
     "Catching up",
     "Hazard ahead",
+    "Police ahead",
 )

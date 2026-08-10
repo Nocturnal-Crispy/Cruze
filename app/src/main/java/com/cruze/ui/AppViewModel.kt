@@ -71,14 +71,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         refreshLibrary()
-        // A route pushed by the leader becomes this rider's route, verbatim.
+        // A route pushed by the leader becomes this rider's route, verbatim, and the ride
+        // starts on it straight away — a follower who has been handed the route is riding it,
+        // and should not have to find a button with gloves on to be told the first turn.
         viewModelScope.launch {
             com.cruze.sync.GroupState.sharedRoute.collect { shared ->
                 if (shared != null) {
                     plan = shared
                     waypoints = shared.waypoints
                     style = shared.style
-                    RideState.setPlan(shared)
+                    startNavigation(getApplication())
                     message = "Route received from ${com.cruze.sync.GroupState.sharedRouteFrom.value}."
                 }
             }

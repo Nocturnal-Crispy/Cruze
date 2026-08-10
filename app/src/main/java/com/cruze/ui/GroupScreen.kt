@@ -115,6 +115,7 @@ private fun Searching() {
 
 @Composable
 private fun StartOrJoin() {
+    val joinState by GroupState.joinState.collectAsStateWithLifecycle()
     var name by remember { mutableStateOf(com.cruze.Settings.riderName) }
     var joining by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
@@ -130,6 +131,24 @@ private fun StartOrJoin() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp, bottom = 20.dp),
         )
+
+        // A join that timed out looking for a leader lands back here; say so, or it reads
+        // as the button simply not working.
+        if (joinState == GroupState.JoinState.NOT_FOUND) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            ) {
+                Text(
+                    "No ride found with that code. A ride only exists while its leader is " +
+                        "running it — check the code, or ask them to start the ride.",
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+        }
 
         OutlinedTextField(
             value = name,
