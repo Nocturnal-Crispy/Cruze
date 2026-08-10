@@ -53,11 +53,11 @@ fun NavScreen(vm: AppViewModel, onStop: () -> Unit) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        OsmMap(modifier = Modifier.fillMaxSize(), onReady = { mapRef = it }) { map ->
+        OsmMap(modifier = Modifier.fillMaxSize(), layer = vm.mapLayer, onReady = { mapRef = it }) { map ->
             map.clearDrawn()
             plan?.let { map.drawRoute(it.shape) }
             fix?.let { f ->
-                map.drawMarker(f.pos, "You", Color.parseColor("#FF1565C0"))
+                map.drawRider(f.pos, f.bearing, f.speedMps > 2f, Color.parseColor("#FF4FA8FF"))
                 map.controller.setCenter(f.pos.geo())
                 // Heading-up only once actually moving; a stationary GPS bearing is noise.
                 map.mapOrientation = if (f.speedMps > 2f) -f.bearing else map.mapOrientation

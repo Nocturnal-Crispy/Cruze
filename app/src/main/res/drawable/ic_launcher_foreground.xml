@@ -4,7 +4,7 @@
     <!-- a curvy road -->
     <path
         android:pathData="M38,86 C38,70 70,70 70,54 C70,38 38,38 38,22"
-        android:strokeColor="#FFFFFF"
+        android:strokeColor="#FFFF3B30"
         android:strokeWidth="9"
         android:strokeLineCap="round" />
 </vector>

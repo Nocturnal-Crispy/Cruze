@@ -39,6 +39,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var style by mutableStateOf(RouteStyle.CURVY)
         private set
+    var roundTrip by mutableStateOf(false)
+        private set
+    var mapLayer by mutableStateOf(MapLayer.DARK)
+        private set
     var plan by mutableStateOf<RoutePlan?>(null)
         private set
     var busy by mutableStateOf(false)
@@ -65,6 +69,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         plan = null
         if (name.isBlank()) nameLast(p)
     }
+
+    /**
+     * Adds a place the rider picked. A route almost always starts from where they are standing,
+     * so the current position becomes the start automatically rather than making them add it.
+     */
+    fun addDestination(p: LatLon, name: String = "") {
+        if (waypoints.isEmpty()) {
+            RideState.fix.value?.let { waypoints = listOf(Waypoint(it.pos, MY_LOCATION)) }
+        }
+        addWaypoint(p, name)
+    }
+
+    /** True when the first waypoint is the rider's live position rather than a chosen place. */
+    val startsFromMyLocation: Boolean
+        get() = waypoints.firstOrNull()?.name == MY_LOCATION
+
+    fun useMyLocationAsStart() {
+        val here = RideState.fix.value?.pos ?: run {
+            message = "No GPS fix yet — waiting for a position."
+            return
+        }
+        waypoints = if (startsFromMyLocation) {
+            listOf(Waypoint(here, MY_LOCATION)) + waypoints.drop(1)
+        } else {
+            listOf(Waypoint(here, MY_LOCATION)) + waypoints
+        }
+        plan = null
+    }
+
+    fun toggleRoundTrip() {
+        roundTrip = !roundTrip
+        plan = null
+        if (waypoints.size >= 2) route()
+    }
+
+    fun setLayer(l: MapLayer) { mapLayer = l }
 
     /** Labels a map-tapped point in the background; a failed lookup is not worth an error. */
     private fun nameLast(p: LatLon) = viewModelScope.launch {
@@ -105,7 +145,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         busy = true
         viewModelScope.launch {
-            runCatching { Valhalla.plan(waypoints, style) }
+            // Re-read the live position so a route started minutes ago still begins from here.
+            val wps = if (startsFromMyLocation) {
+                val here = RideState.fix.value?.pos
+                if (here != null) listOf(Waypoint(here, MY_LOCATION)) + waypoints.drop(1) else waypoints
+            } else waypoints
+            runCatching { Valhalla.plan(wps, style, roundTrip) }
                 .onSuccess {
                     plan = it
                     RideState.setPlan(it)
@@ -230,6 +275,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** Marks the waypoint that tracks the rider's live position. */
+        const val MY_LOCATION = "My location"
+
         fun stamp(ms: Long): String =
             SimpleDateFormat("d MMM HH:mm", Locale.getDefault()).format(Date(ms))
     }

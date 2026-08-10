@@ -26,8 +26,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,47 +41,46 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.curv3.data.SavedRoute
 import com.curv3.data.SavedTrack
+import com.curv3.nav.LocationSource
 import com.curv3.service.RideService
 import com.curv3.ui.AppViewModel
 import com.curv3.ui.NavScreen
 import com.curv3.ui.PlanScreen
+import com.curv3.ui.Curv3Theme
 import com.curv3.ui.RidesScreen
 import com.curv3.ui.initOsmdroid
 
 class MainActivity : ComponentActivity() {
 
+    private lateinit var location: LocationSource
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, true)
         initOsmdroid(this)
-        setContent { Curv3Theme { App() } }
+        location = LocationSource(this)
+        setContent { Curv3Theme { App(onPermissionGranted = { location.start() }) } }
     }
 
     override fun onResume() {
         super.onResume()
         // A rider should never have the screen time out mid-corner.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // The map needs to know where the rider is even when no ride is running.
+        location.start()
     }
 
     override fun onPause() {
         super.onPause()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        location.stop()
     }
-}
-
-@Composable
-private fun Curv3Theme(content: @Composable () -> Unit) {
-    val dark = androidx.compose.foundation.isSystemInDarkTheme()
-    MaterialTheme(
-        colorScheme = if (dark) darkColorScheme() else lightColorScheme(),
-        content = content,
-    )
 }
 
 private enum class Tab(val label: String) { PLAN("Plan"), RIDE("Ride"), LIBRARY("Rides") }
 
 @Composable
-private fun App(vm: AppViewModel = viewModel()) {
+private fun App(vm: AppViewModel = viewModel(), onPermissionGranted: () -> Unit = {}) {
     val ctx = LocalContext.current
     val navigating by RideState.navigating.collectAsStateWithLifecycle()
     val recording by RideState.recording.collectAsStateWithLifecycle()
@@ -98,6 +95,7 @@ private fun App(vm: AppViewModel = viewModel()) {
     ) { result ->
         hasLocation = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             ctx.hasLocationPermission()
+        if (hasLocation) onPermissionGranted()
     }
 
     LaunchedEffect(Unit) {

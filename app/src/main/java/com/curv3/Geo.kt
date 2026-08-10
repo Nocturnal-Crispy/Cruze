@@ -50,6 +50,17 @@ fun cumulative(path: List<LatLon>): DoubleArray {
 fun interpolate(a: LatLon, b: LatLon, t: Double) =
     LatLon(a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t)
 
+/** The point [distM] metres from [from] along [bearing]. Used to place round-trip via points. */
+fun destinationPoint(from: LatLon, bearing: Double, distM: Double): LatLon {
+    val br = Math.toRadians(bearing)
+    val la = Math.toRadians(from.lat)
+    val lo = Math.toRadians(from.lon)
+    val ad = distM / EARTH_R
+    val la2 = kotlin.math.asin(sin(la) * cos(ad) + cos(la) * sin(ad) * cos(br))
+    val lo2 = lo + atan2(sin(br) * sin(ad) * cos(la), cos(ad) - sin(la) * sin(la2))
+    return LatLon(Math.toDegrees(la2), ((Math.toDegrees(lo2) + 540) % 360) - 180)
+}
+
 /**
  * Distance in metres from [p] to segment [a]-[b], plus how far along the segment the
  * closest point lies (0..1). Uses a local flat projection — exact enough at segment scale.

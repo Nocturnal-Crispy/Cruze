@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Curv3" parent="android:Theme.Material.NoActionBar" />
+    <!-- Dark by default: the launch window must already be black or the app flashes white. -->
+    <style name="Theme.Curv3" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/curv3_black</item>
+        <item name="android:statusBarColor">@color/curv3_black</item>
+        <item name="android:navigationBarColor">@color/curv3_black</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>
