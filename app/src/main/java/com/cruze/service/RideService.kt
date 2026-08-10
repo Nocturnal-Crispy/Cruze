@@ -128,6 +128,8 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
                 }
             }
         }
+        // "I'M OK" must stand the detector down too, not just hide the countdown.
+        GroupState.onFallDismissed = { fallDetector.reset() }
         lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         sensors = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
         createChannel()
@@ -369,6 +371,7 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
     }
 
     override fun onDestroy() {
+        GroupState.onFallDismissed = null
         runCatching { lm.removeUpdates(this) }
         runCatching { sensors?.unregisterListener(this) }
         speaker?.release()

@@ -111,7 +111,17 @@ object GroupState {
         _fallDeadline.value = System.currentTimeMillis() + seconds * 1000L
     }
 
-    fun cancelFallCountdown() { _fallDeadline.value = null }
+    /**
+     * Set by the service so that dismissing a false alarm also stands the detector down.
+     * Without it "I'M OK" cleared only the deadline, the detector stayed CONFIRMED, and the
+     * very next accelerometer sample — about 200 ms later — started the countdown again.
+     */
+    var onFallDismissed: (() -> Unit)? = null
+
+    fun cancelFallCountdown() {
+        _fallDeadline.value = null
+        onFallDismissed?.invoke()
+    }
 
     /** Fires the alert if the countdown ran out. Returns true when an alert went out. */
     fun fireFallIfElapsed(): Boolean {
