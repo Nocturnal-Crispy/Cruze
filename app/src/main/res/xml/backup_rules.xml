@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Garage and recorded rides are the only irreplaceable data; map tiles are a cache. -->
+<full-backup-content>
+    <include domain="file" path="garage.json" />
+    <include domain="file" path="tracks/" />
+    <exclude domain="file" path="osmdroid/" />
+</full-backup-content>

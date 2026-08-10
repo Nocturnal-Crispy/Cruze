@@ -56,7 +56,12 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun GarageScreen(vm: GarageViewModel, onExportCsv: () -> Unit) {
+fun GarageScreen(
+    vm: GarageViewModel,
+    onExportCsv: () -> Unit,
+    onBackup: () -> Unit,
+    onRestore: () -> Unit,
+) {
     var addBike by remember { mutableStateOf(false) }
     var addService by remember { mutableStateOf(false) }
     var addFuel by remember { mutableStateOf(false) }
@@ -159,6 +164,22 @@ fun GarageScreen(vm: GarageViewModel, onExportCsv: () -> Unit) {
             }
         }
         items(entries) { e -> FuelRow(e) { vm.deleteFuel(e.id) } }
+
+        item {
+            Column(Modifier.padding(top = 16.dp)) {
+                SectionHeader("Backup")
+                Text(
+                    "Your garage lives on this phone. Back it up to a file so service history " +
+                        "survives a reinstall or a new phone.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row {
+                    TextButton(onClick = onBackup) { Text("Back up to file") }
+                    TextButton(onClick = onRestore) { Text("Restore") }
+                }
+            }
+        }
 
         item { Spacer(Modifier.height(24.dp)) }
     }

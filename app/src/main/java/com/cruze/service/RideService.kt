@@ -29,6 +29,12 @@ import com.cruze.nav.Cue
 import com.cruze.nav.CuePlanner
 import com.cruze.nav.NavEngine
 import com.cruze.nav.Speaker
+import com.cruze.safety.FallDetector
+import com.cruze.safety.FallPhase
+import com.cruze.safety.SensorSample
+import com.cruze.safety.accelMagnitude
+import com.cruze.safety.tiltFromGravity
+import com.cruze.sync.GroupState
 import com.cruze.route.RoutePlan
 import com.cruze.route.Valhalla
 import com.cruze.route.Waypoint
@@ -43,7 +49,7 @@ import kotlinx.coroutines.launch
  * Owns GPS for the whole app. Navigation guidance and ride recording both run here so that
  * pocketing the phone mid-ride does not stop either of them.
  */
-class RideService : Service(), LocationListener {
+class RideService : Service(), LocationListener, android.hardware.SensorEventListener {
 
     companion object {
         const val ACTION_START_NAV = "com.cruze.START_NAV"
@@ -69,11 +75,16 @@ class RideService : Service(), LocationListener {
     private var lastRerouteAt = 0L
     private var notifText = "Waiting for GPS…"
 
+    private val fallDetector = FallDetector()
+    private var sensors: android.hardware.SensorManager? = null
+    private var lastTiltDeg = 0f
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        sensors = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
         createChannel()
     }
 
@@ -110,6 +121,7 @@ class RideService : Service(), LocationListener {
         }
 
         startLocation()
+        startSensors()
         refreshNotification()
         return START_STICKY
     }
@@ -136,6 +148,36 @@ class RideService : Service(), LocationListener {
             .onFailure { RideState.setStatus("Could not start GPS: ${it.message}") }
     }
 
+    /** Accelerometer only while a ride is actually running — it is not free. */
+    private fun startSensors() {
+        val sm = sensors ?: return
+        sm.unregisterListener(this)
+        sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)?.let {
+            sm.registerListener(this, it, android.hardware.SensorManager.SENSOR_DELAY_NORMAL)
+        }
+    }
+
+    override fun onSensorChanged(event: android.hardware.SensorEvent) {
+        if (event.sensor.type != android.hardware.Sensor.TYPE_ACCELEROMETER) return
+        val (x, y, z) = Triple(event.values[0], event.values[1], event.values[2])
+        lastTiltDeg = tiltFromGravity(x, y, z)
+        val sample = SensorSample(
+            atMs = System.currentTimeMillis(),
+            accelMag = accelMagnitude(x, y, z),
+            tiltDeg = lastTiltDeg,
+            speedMps = RideState.fix.value?.speedMps ?: 0f,
+        )
+        if (fallDetector.update(sample).phase == FallPhase.CONFIRMED && GroupState.active) {
+            GroupState.beginFallCountdown()
+        }
+        // The countdown has to run even with no GPS updates coming in.
+        if (GroupState.fireFallIfElapsed()) {
+            speaker?.say("Alerting your group.")
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
+
     override fun onLocationChanged(loc: Location) {
         val fix = Fix(
             pos = LatLon(loc.latitude, loc.longitude),
@@ -149,6 +191,14 @@ class RideService : Service(), LocationListener {
 
         if (RideState.recording.value) recordPoint(fix)
         if (RideState.navigating.value) guide(fix)
+
+        if (GroupState.active) {
+            GroupState.publishPositionIfDue(
+                context = this,
+                navigating = RideState.navigating.value,
+                distToManeuverM = RideState.progress.value?.distToManeuverM,
+            )
+        }
 
         refreshNotification()
     }
@@ -240,6 +290,7 @@ class RideService : Service(), LocationListener {
 
     private fun stopEverything() {
         runCatching { lm.removeUpdates(this) }
+        runCatching { sensors?.unregisterListener(this) }
         RideState.setNavigating(false)
         RideState.setRecording(false)
         RideState.setProgress(null)
@@ -252,6 +303,7 @@ class RideService : Service(), LocationListener {
 
     override fun onDestroy() {
         runCatching { lm.removeUpdates(this) }
+        runCatching { sensors?.unregisterListener(this) }
         speaker?.release()
         scope.cancel()
         super.onDestroy()

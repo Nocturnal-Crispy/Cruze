@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsBike
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Route
@@ -56,7 +58,11 @@ import com.cruze.garage.GarageViewModel
 import com.cruze.nav.LocationSource
 import com.cruze.ui.AppViewModel
 import com.cruze.ui.CruzeTheme
+import com.cruze.route.encodePolyline
+import com.cruze.sync.GroupState
+import com.cruze.ui.FallCountdownOverlay
 import com.cruze.ui.GarageScreen
+import com.cruze.ui.GroupScreen
 import com.cruze.ui.GloveTarget
 import com.cruze.ui.NavScreen
 import com.cruze.ui.PlanScreen
@@ -93,6 +99,7 @@ class MainActivity : ComponentActivity() {
 private enum class Tab(val label: String, val icon: ImageVector) {
     MAP("Map", Icons.Default.Map),
     RIDE("Ride", Icons.Default.PlayArrow),
+    GROUP("Group", Icons.Default.Group),
     RIDES("Rides", Icons.Default.Route),
     GARAGE("Garage", Icons.Default.DirectionsBike),
 }
@@ -149,11 +156,20 @@ private fun App(
         uri?.let { vm.importGpx(ctx, it) }
     }
 
+    val openBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        }.getOrNull()?.let { garage.restoreFrom(it) }
+            ?: run { garage.message = "Could not read that file." }
+    }
+
     fun saveAs(name: String, writer: (Uri) -> Unit) {
         pendingWrite = writer
         createFile.launch(name)
     }
 
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
@@ -166,7 +182,7 @@ private fun App(
                         selected = tab == t,
                         onClick = { tab = t },
                         icon = { Icon(t.icon, contentDescription = t.label) },
-                        label = { Text(t.label, fontSize = 11.sp) },
+                        label = { Text(t.label, fontSize = 10.sp, maxLines = 1) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.onPrimary,
                             selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -214,22 +230,44 @@ private fun App(
                     )
                 }
 
+                Tab.GROUP -> GroupScreen(onShareRoute = {
+                    val p = vm.plan
+                    if (p == null) {
+                        vm.message = "Plan a route first, then push it to the group."
+                    } else {
+                        GroupState.shareRoute(encodePolyline(p.shape), "Leader's route")
+                        vm.message = "Route pushed to the group."
+                    }
+                })
+
                 Tab.RIDES -> RidesScreen(vm) { t: SavedTrack ->
                     saveAs("${t.name.safe()}.gpx") { uri -> vm.exportTrack(ctx, t, uri) }
                 }
 
-                Tab.GARAGE -> GarageScreen(garage) {
-                    saveAs("cruze-fuel-log.csv") { uri ->
-                        runCatching {
-                            ctx.contentResolver.openOutputStream(uri)?.use {
-                                it.write(garage.fuelCsv().toByteArray())
-                            }
-                        }.onSuccess { garage.message = "Fuel log exported." }
-                            .onFailure { garage.message = "Export failed: ${it.message}" }
-                    }
-                }
+                Tab.GARAGE -> GarageScreen(
+                    vm = garage,
+                    onExportCsv = {
+                        saveAs("cruze-fuel-log.csv") { uri ->
+                            writeText(ctx, uri, garage.fuelCsv(),
+                                { garage.message = "Fuel log exported." },
+                                { garage.message = "Export failed: $it" })
+                        }
+                    },
+                    onBackup = {
+                        saveAs("cruze-garage-backup.json") { uri ->
+                            writeText(ctx, uri, garage.backupJson(),
+                                { garage.message = "Garage backed up." },
+                                { garage.message = "Backup failed: $it" })
+                        }
+                    },
+                    onRestore = { openBackup.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                )
             }
         }
+    }
+
+    // Last child wins the z-order: a fall alert must cover every screen and the nav bar.
+    FallCountdownOverlay()
     }
 }
 
@@ -304,6 +342,19 @@ private fun RideIdle(
             ) { Text("Plan a route", fontSize = 17.sp) }
         }
     }
+}
+
+private fun writeText(
+    ctx: android.content.Context,
+    uri: Uri,
+    text: String,
+    onOk: () -> Unit,
+    onErr: (String) -> Unit,
+) {
+    runCatching {
+        ctx.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+            ?: error("could not open the file")
+    }.onSuccess { onOk() }.onFailure { onErr(it.message ?: "unknown error") }
 }
 
 private fun android.content.Context.hasLocationPermission() =

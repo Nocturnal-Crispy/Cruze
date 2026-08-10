@@ -106,6 +106,24 @@ class GarageStore(context: Context) {
         file.writeText(o.toString())
     }
 
+    /**
+     * The whole garage as portable JSON.
+     *
+     * Cloud backup only restores when the rider has Google backup switched on, and never
+     * during a developer reinstall, so an explicit file the rider owns is the only guarantee
+     * their service history survives.
+     */
+    fun exportJson(): String = if (file.exists()) file.readText() else "{}"
+
+    fun importJson(text: String): Garage {
+        val restored = runCatching {
+            JSONObject(text)
+            file.writeText(text)
+            load()
+        }.getOrElse { throw IllegalArgumentException("That file is not a Cruze garage backup.") }
+        return restored
+    }
+
     /** The schedule most riders actually run, so a new bike is useful immediately. */
     fun defaultSchedule(bikeId: String, odometerMi: Double, nowMs: Long) = listOf(
         service(bikeId, "Engine oil & filter", 4000.0, 365, odometerMi, nowMs),

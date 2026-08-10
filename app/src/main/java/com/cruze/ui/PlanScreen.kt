@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cruze.LatLon
 import com.cruze.RideState
+import com.cruze.sync.GroupState
 import com.cruze.fmtDist
 import com.cruze.fmtDur
 import com.cruze.route.RouteStyle
@@ -80,6 +81,8 @@ fun PlanScreen(
     onImport: () -> Unit,
 ) {
     val fix by RideState.fix.collectAsStateWithLifecycle()
+    val groupRoster by GroupState.roster.collectAsStateWithLifecycle()
+    val trails by GroupState.trails.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
     var mapRef by remember { mutableStateOf<MapView?>(null) }
     var followedOnce by remember { mutableStateOf(false) }
@@ -133,6 +136,11 @@ fun PlanScreen(
                     else -> Color(0xFFFFB300)
                 }
                 map.drawMarker(w.pos, w.name.ifBlank { "Point ${i + 1}" }, color.toArgb(), "${i + 1}")
+            }
+            // Everyone else in the group, each in their own colour with a breadcrumb trail.
+            groupRoster.forEach { r ->
+                trails[r.riderId]?.takeIf { it.size > 1 }?.let { map.drawTrail(it, riderColor(r.riderId).toArgb()) }
+                map.drawRider(r.pos, r.bearing, r.speedMps > 2f, riderColor(r.riderId).toArgb())
             }
             fix?.let {
                 map.drawRider(it.pos, it.bearing, it.speedMps > 2f, Color(0xFF4FA8FF).toArgb())

@@ -51,6 +51,8 @@ dependencies {
     implementation("org.osmdroid:osmdroid-android:6.1.20")
     // HTTP for Valhalla / Nominatim. JSON parsing uses android org.json (no dep).
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // QR for group join codes. Pure-Java core only, no camera/UI deps, no keys.
+    implementation("com.google.zxing:core:3.5.3")
 
     testImplementation("junit:junit:4.13.2")
     // Android stubs org.json in unit tests; the real thing lets us parse live API responses.

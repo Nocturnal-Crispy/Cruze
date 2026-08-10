@@ -150,6 +150,18 @@ fun MapView.drawTrack(shape: List<LatLon>) {
     })
 }
 
+/** A rider's recent breadcrumbs, thin so it never competes with the route line. */
+fun MapView.drawTrail(shape: List<LatLon>, color: Int) {
+    if (shape.size < 2) return
+    overlays.add(Polyline(this).apply {
+        outlinePaint.color = color
+        outlinePaint.alpha = 170
+        outlinePaint.strokeWidth = 3f * resources.displayMetrics.density
+        outlinePaint.strokeCap = Paint.Cap.ROUND
+        setPoints(shape.map { it.geo() })
+    })
+}
+
 fun MapView.drawMarker(p: LatLon, title: String, color: Int, label: String? = null) {
     overlays.add(Marker(this).apply {
         position = p.geo()

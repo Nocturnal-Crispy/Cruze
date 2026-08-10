@@ -118,6 +118,14 @@ class GarageViewModel(app: Application) : AndroidViewModel(app) {
 
     fun fuelEntries(): List<FuelEntry> = bike?.let { garage.fuelFor(it.id) } ?: emptyList()
 
+    fun backupJson(): String = store.exportJson()
+
+    fun restoreFrom(text: String) {
+        runCatching { garage = store.importJson(text) }
+            .onSuccess { message = "Garage restored — ${garage.bikes.size} bike(s)." }
+            .onFailure { message = it.message ?: "Restore failed." }
+    }
+
     /** CSV of the fuel log, for the riders who keep spreadsheets. */
     fun fuelCsv(): String = buildString {
         appendLine("date,odometer_mi,gallons,cost,full,mpg")
