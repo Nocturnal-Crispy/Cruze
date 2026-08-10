@@ -26,6 +26,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +40,14 @@ import com.cruze.sync.GroupState
 import kotlinx.coroutines.delay
 
 private data class Toast(val riderId: String, val who: String, val what: String, val urgent: Boolean)
+
+private fun keyOf(riderId: String, atMs: Long, what: String) = "$riderId/$atMs/$what"
+
+/** Keeps the already-shown set across tab switches, so nothing pops up twice. */
+private val setSaver = listSaver<MutableSet<String>, String>(
+    save = { it.toList().takeLast(200) },
+    restore = { it.toMutableSet() },
+)
 
 /**
  * A brief banner for whatever the group just said, over whichever screen the rider is on.
@@ -52,29 +62,39 @@ fun BoxScope.GroupToast() {
     val alerts by GroupState.alerts.collectAsStateWithLifecycle()
 
     var shown by remember { mutableStateOf<Toast?>(null) }
-    var lastMessageAt by remember { mutableStateOf(0L) }
-    var lastAlertAt by remember { mutableStateOf(0L) }
+    // Keyed by sender and content rather than by a timestamp high-water mark: riders' clocks
+    // disagree, and one running slow was silently never shown. Survives tab switches via the
+    // saver-less rememberSaveable-equivalent below — GroupState outlives this composable, so
+    // seeding from what is already in the list stops old messages popping up again on return.
+    val seen = rememberSaveable(saver = setSaver) { mutableSetOf<String>() }
+    var primed by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!primed) {
+            messages.forEach { seen.add(keyOf(it.riderId, it.atMs, it.message)) }
+            alerts.forEach { seen.add(keyOf(it.riderId, it.atMs, it.kind.name)) }
+            primed = true
+        }
+    }
 
     LaunchedEffect(messages) {
-        val m = messages.lastOrNull() ?: return@LaunchedEffect
-        if (m.atMs <= lastMessageAt) return@LaunchedEffect
-        lastMessageAt = m.atMs
-        shown = Toast(m.riderId, m.name, m.message, urgent = false)
-        delay(5000)
-        if (shown?.what == m.message) shown = null
+        // Every unseen message gets its turn, so a burst is not collapsed into one banner.
+        messages.filter { seen.add(keyOf(it.riderId, it.atMs, it.message)) }.forEach { m ->
+            shown = Toast(m.riderId, m.name, m.message, urgent = false)
+            delay(5000)
+            if (shown?.what == m.message) shown = null
+        }
     }
 
     LaunchedEffect(alerts) {
-        val a = alerts.lastOrNull() ?: return@LaunchedEffect
-        if (a.atMs <= lastAlertAt) return@LaunchedEffect
-        lastAlertAt = a.atMs
-        shown = Toast(
-            a.riderId, a.name,
-            a.kind.name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() },
-            urgent = true,
-        )
-        delay(12_000)
-        if (shown?.urgent == true) shown = null
+        alerts.filter { seen.add(keyOf(it.riderId, it.atMs, it.kind.name)) }.forEach { a ->
+            shown = Toast(
+                a.riderId, a.name,
+                a.kind.name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() },
+                urgent = true,
+            )
+            delay(12_000)
+            if (shown?.urgent == true) shown = null
+        }
     }
 
     AnimatedVisibility(

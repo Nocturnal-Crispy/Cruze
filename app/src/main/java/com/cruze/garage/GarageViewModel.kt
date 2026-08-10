@@ -136,11 +136,13 @@ class GarageViewModel(app: Application) : AndroidViewModel(app) {
                 listOf(
                     java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
                         .format(java.util.Date(e.atMs)),
-                    "%.1f".format(e.odometerMi),
-                    "%.3f".format(e.gallons),
-                    "%.2f".format(e.cost),
+                    // Locale.ROOT throughout: a comma-decimal phone wrote "12,5" into a
+                    // comma-separated file, which every spreadsheet then read as two columns.
+                    "%.1f".format(java.util.Locale.ROOT, e.odometerMi),
+                    "%.3f".format(java.util.Locale.ROOT, e.gallons),
+                    "%.2f".format(java.util.Locale.ROOT, e.cost),
                     e.full,
-                    mpg[e]?.let { "%.1f".format(it) } ?: "",
+                    mpg[e]?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: "",
                 ).joinToString(",")
             )
         }

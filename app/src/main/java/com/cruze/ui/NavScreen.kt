@@ -43,6 +43,7 @@ import com.cruze.fmtDist
 import com.cruze.fmtDur
 import com.cruze.fmtSpeed
 import com.cruze.fmtTurnDist
+import com.cruze.speedUnit
 import com.cruze.sync.AlertKind
 import com.cruze.sync.GroupState
 import com.cruze.sync.PRESET_MESSAGES
@@ -124,7 +125,7 @@ fun NavScreen(vm: AppViewModel, onStop: () -> Unit) {
         ) {
             Column(Modifier.padding(16.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Big(fmtSpeed(fix?.speedMps ?: 0f), "mph")
+                    Big(fmtSpeed(fix?.speedMps ?: 0f), speedUnit())
                     Big(fmtDist(progress?.remainingM ?: plan?.lengthM ?: 0.0), "left")
                     Big(fmtDur(progress?.remainingS ?: plan?.timeS ?: 0.0), "to go")
                 }

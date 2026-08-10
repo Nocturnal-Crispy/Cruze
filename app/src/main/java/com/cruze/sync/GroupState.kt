@@ -131,8 +131,12 @@ object GroupState {
                     is RideEvent.RouteChunk -> {
                         val done = assembler.accept(event)
                         if (done != null) {
-                            _sharedRoute.value = done.first
                             _sharedRouteFrom.value = done.second
+                            // Null first: a StateFlow swallows a value equal to the one it
+                            // already holds, so re-pushing the identical route — exactly what a
+                            // leader does when someone joins late — reached nobody.
+                            _sharedRoute.value = null
+                            _sharedRoute.value = done.first
                             _routeProgress.value = null
                         } else {
                             _routeProgress.value = assembler.progress()
@@ -168,6 +172,18 @@ object GroupState {
 
     /** Lets the UI start and stop the foreground service that carries a group ride. */
     var onSessionChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * A join link scanned from a leader's QR, waiting for the group screen to act on it.
+     * Held here rather than passed through the activity because the scan can arrive while the
+     * app is already open on any tab.
+     */
+    private val _pendingJoin = MutableStateFlow<Wire.JoinLink?>(null)
+    val pendingJoin: StateFlow<Wire.JoinLink?> = _pendingJoin.asStateFlow()
+
+    fun offerJoinLink(link: Wire.JoinLink) { _pendingJoin.value = link }
+
+    fun consumeJoinLink() { _pendingJoin.value = null }
 
     suspend fun start(joinCode: String, name: String, role: RiderRole) {
         val s = GroupSession(Wire.normaliseCode(joinCode), Wire.newRiderId(), name, role)
@@ -210,6 +226,11 @@ object GroupState {
         repository.leave()
         _session.value = null
         _trails.value = emptyMap()
+        assembler.clear()
+        _routeProgress.value = null
+        // Without this the foreground service keeps GPS, the accelerometer and its notification
+        // running for the rest of the day: start() turns it on and nothing else turned it off.
+        onSessionChanged?.invoke(false)
     }
 
     private fun me(s: GroupSession, batteryPct: Int): RiderPing {

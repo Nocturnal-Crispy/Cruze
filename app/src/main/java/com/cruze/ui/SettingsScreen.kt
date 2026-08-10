@@ -118,13 +118,17 @@ fun SettingsScreen(versionName: String) {
                 value = Settings.relayUrl,
                 onValueChange = { Settings.updateRelayUrl(it) },
                 label = { Text("Group relay server") },
+                placeholder = { Text("Automatic", maxLines = 1) },
                 supportingText = {
                     Text(
-                        if (Settings.relayUrl == Settings.DEFAULT_RELAY)
-                            "Free public relay. It rate-limits how often positions can be sent, " +
-                                "so a large group may see delayed updates. Point this at your " +
-                                "own ntfy server to remove that limit."
-                        else "Using your own relay.",
+                        if (Settings.usingPublicRelay)
+                            "Leave blank to use ${Settings.PUBLIC_RELAYS.size} free public " +
+                                "relays together, so the ride survives one going down. Enter " +
+                                "your own ntfy server to use only that — everyone in the group " +
+                                "must set the same one."
+                        else "Using only your relay. Everyone in the group must set this same " +
+                            "address, or they will not see each other. Clear it to go back to " +
+                            "the public relays.",
                         fontSize = 11.sp,
                     )
                 },
@@ -166,7 +170,7 @@ fun SettingsScreen(versionName: String) {
                         "Routing by Valhalla (FOSSGIS). Maps © OpenStreetMap contributors, " +
                             "© CARTO, © OpenTopoMap, Esri. Search by Nominatim. Radar by " +
                             "RainViewer. Warnings by the US National Weather Service. Group " +
-                            "position relay by ntfy.sh.",
+                            "position relay by public ntfy servers.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp),

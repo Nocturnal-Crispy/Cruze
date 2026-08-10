@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -116,10 +117,21 @@ private fun Searching() {
 @Composable
 private fun StartOrJoin() {
     val joinState by GroupState.joinState.collectAsStateWithLifecycle()
+    val scanned by GroupState.pendingJoin.collectAsStateWithLifecycle()
     var name by remember { mutableStateOf(com.cruze.Settings.riderName) }
     var joining by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    // A scanned QR has already applied the leader's relay; fill the code in and, if we know
+    // who this rider is, take them straight into the ride — that is the point of scanning.
+    LaunchedEffect(scanned) {
+        val link = scanned ?: return@LaunchedEffect
+        GroupState.consumeJoinLink()
+        code = link.code
+        if (name.isBlank()) joining = true
+        else GroupState.start(link.code, name.trim(), RiderRole.RIDER)
+    }
 
     Column(
         Modifier.fillMaxSize().padding(24.dp),
@@ -259,10 +271,30 @@ private fun InRide(onShareRoute: () -> Unit) {
                         color = MaterialTheme.colorScheme.primary,
                         letterSpacing = 6.sp,
                     )
-                    qrBitmap(s.joinCode)?.let {
+                    qrBitmap(Wire.joinLink(s.joinCode, com.cruze.Settings.relayUrl))?.let {
                         Image(
                             it.asImageBitmap(), "Join QR code",
                             Modifier.padding(top = 12.dp).size(160.dp),
+                        )
+                    }
+                    // On a private relay the code alone is not enough — a rider who types it in
+                    // lands on the public relays and sees an empty ride. Scanning carries the
+                    // server across; anyone typing has to be told what to set.
+                    if (!com.cruze.Settings.usingPublicRelay) {
+                        Text(
+                            "Scanning this sets everything up. Anyone typing the code instead " +
+                                "must first put this in Settings → Group relay server, or they " +
+                                "will not see the group:",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 12.dp),
+                        )
+                        Text(
+                            com.cruze.Settings.relayUrl,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 4.dp),
                         )
                     }
                     TransportChip(status.kind, status.connected, status.queued)
@@ -577,9 +609,12 @@ private fun GroupStat(value: String, label: String) {
 private fun clockOf(ms: Long): String =
     java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ms))
 
-/** Renders the join code as a QR so a pillion can scan it without typing at a petrol stop. */
-private fun qrBitmap(code: String, size: Int = 320): Bitmap? = runCatching {
-    val matrix = QRCodeWriter().encode("cruze://join/$code", BarcodeFormat.QR_CODE, size, size)
+/**
+ * Renders the join link as a QR so a pillion can scan it without typing at a petrol stop.
+ * The link carries the relay too, so scanning is enough even on a private server.
+ */
+private fun qrBitmap(link: String, size: Int = 320): Bitmap? = runCatching {
+    val matrix = QRCodeWriter().encode(link, BarcodeFormat.QR_CODE, size, size)
     Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).apply {
         for (x in 0 until size) {
             for (y in 0 until size) {

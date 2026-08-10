@@ -45,7 +45,9 @@ fun RidesScreen(vm: AppViewModel, onExportTrack: (SavedTrack) -> Unit) {
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Summary("${vm.tracks.size}", "rides")
-                    Summary("%.0f".format(metresToMiles(total)), "miles")
+                    // fmtDist already switches on Settings.metric; the label has to follow it, or a
+                    // metric rider reads kilometres under the word "miles".
+                    Summary(fmtDist(total), "ridden")
                     Summary(
                         fmtDur(vm.tracks.sumOf { trackMovingS(it.points) }),
                         "moving",

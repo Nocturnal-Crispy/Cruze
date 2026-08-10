@@ -262,7 +262,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun saveTrack(points: List<Fix>) {
         val name = "Ride ${stamp(points.first().timeMs)} · ${
-            "%.1f mi".format(Locale.getDefault(), metresToMiles(trackDistanceM(points)))
+            com.cruze.fmtDist(trackDistanceM(points))
         }"
         store.saveTrack(SavedTrack(UUID.randomUUID().toString(), name, points.first().timeMs, points))
         refreshLibrary()

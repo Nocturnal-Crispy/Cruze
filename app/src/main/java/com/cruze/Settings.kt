@@ -61,13 +61,39 @@ object Settings {
         private set
 
     /**
-     * Group relay. The public instance is free but rate-limits publishing, so a rider who
-     * outgrows it can point this at their own ntfy server without a new build.
+     * Group relay. Blank means "use whichever public relay is working" — see [PUBLIC_RELAYS].
+     * A rider who wants their own ntfy server sets it here and it is then used exclusively.
      */
-    var relayUrl by mutableStateOf(DEFAULT_RELAY)
+    var relayUrl by mutableStateOf("")
         private set
 
-    const val DEFAULT_RELAY = "https://ntfy.sh"
+    /**
+     * The public ntfy instances used when no relay has been chosen — **all of them, at once**,
+     * not one with the others in reserve. See [com.cruze.sync.NtfyTransport] for why: riders
+     * cannot agree to switch relays over a channel that has just broken, so switching splits
+     * the group. Talking on all of them cannot.
+     *
+     * ntfy.sh is deliberately NOT here: its anonymous tier has a daily message quota that a
+     * single phone exhausts in well under an hour of riding — one position every 12 s is about
+     * 300 messages an hour against a 250-a-day cap — and when it runs out, positions simply
+     * stop with no warning. These run stock ntfy, which rate-limits by burst but sets no daily
+     * cap, so a full day's riding fits. Three, because one being down must be survivable and
+     * every extra one costs another publish per position.
+     */
+    val PUBLIC_RELAYS = listOf(
+        "https://ntfy.envs.net",
+        "https://ntfy.adminforge.de",
+        "https://ntfy.hostux.net",
+    )
+
+    /** Only meaningful as "the first of the public set"; nothing picks a single relay any more. */
+    val DEFAULT_RELAY: String get() = PUBLIC_RELAYS.first()
+
+    /** True when the rider has not named their own server, so failover is allowed to move. */
+    val usingPublicRelay: Boolean get() = relayUrl.isBlank()
+
+    /** Retired default, migrated away from on load because it cannot survive a ride. */
+    private const val EXHAUSTED_RELAY = "https://ntfy.sh"
 
     fun load(context: Context) {
         if (::prefs.isInitialized) return
@@ -85,7 +111,10 @@ object Settings {
         lostRiderThresholdM = prefs.getFloat("lostRiderThresholdM", 1600f).toDouble()
         defaultStyle = prefs.getString("defaultStyle", "CURVY").orEmpty()
         defaultLayer = prefs.getString("defaultLayer", "DARK").orEmpty()
-        relayUrl = prefs.getString("relayUrl", DEFAULT_RELAY).orEmpty().ifBlank { DEFAULT_RELAY }
+        // Existing installs are pinned to the old default in their prefs; move them off it,
+        // or they keep riding into a daily quota that stops position sharing mid-ride.
+        relayUrl = prefs.getString("relayUrl", "").orEmpty()
+            .let { if (it == EXHAUSTED_RELAY) "" else it }
     }
 
     private fun edit(block: SharedPreferences.Editor.() -> Unit) {
@@ -118,8 +147,9 @@ object Settings {
     fun updateDefaultStyle(v: String) { defaultStyle = v; edit { putString("defaultStyle", v) } }
     fun updateDefaultLayer(v: String) { defaultLayer = v; edit { putString("defaultLayer", v) } }
 
+    /** Blank clears it back to the public relays and their failover. */
     fun updateRelayUrl(v: String) {
-        val clean = v.trim().trimEnd('/').ifBlank { DEFAULT_RELAY }
+        val clean = v.trim().trimEnd('/')
         relayUrl = clean
         edit { putString("relayUrl", clean) }
     }
