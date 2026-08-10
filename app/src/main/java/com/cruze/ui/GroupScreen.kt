@@ -108,14 +108,14 @@ private fun StartOrJoin() {
                 scope.launch { GroupState.start(Wire.newJoinCode(), name.trim(), RiderRole.LEADER) }
             },
             enabled = name.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().height(GloveTarget).padding(top = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 16.dp).height(GloveTarget),
             shape = RoundedCornerShape(16.dp),
         ) { Text("Start a ride", fontSize = 17.sp) }
 
         Button(
             onClick = { joining = true },
             enabled = name.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().height(GloveTarget).padding(top = 10.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(GloveTarget),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -251,7 +251,7 @@ private fun InRide(onShareRoute: () -> Unit) {
         item {
             Button(
                 onClick = { GroupState.sendAlert(AlertKind.SOS) },
-                modifier = Modifier.fillMaxWidth().height(GloveTarget).padding(top = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(GloveTarget),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error,

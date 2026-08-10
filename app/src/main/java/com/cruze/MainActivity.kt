@@ -320,7 +320,7 @@ private fun RideIdle(
 
         Button(
             onClick = { if (recording) onStopRecording() else onStartRecording() },
-            modifier = Modifier.fillMaxWidth().height(GloveTarget).padding(top = 28.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 28.dp).height(GloveTarget),
             shape = RoundedCornerShape(16.dp),
             colors = if (recording) {
                 ButtonDefaults.buttonColors(
@@ -333,7 +333,7 @@ private fun RideIdle(
         if (!recording) {
             Button(
                 onClick = onPlan,
-                modifier = Modifier.fillMaxWidth().height(GloveTarget).padding(top = 10.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(GloveTarget),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
