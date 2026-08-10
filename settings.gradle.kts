@@ -13,5 +13,5 @@ dependencyResolutionManagement {
         maven("https://jitpack.io")
     }
 }
-rootProject.name = "Curv3"
+rootProject.name = "Cruze"
 include(":app")

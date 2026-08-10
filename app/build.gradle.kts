@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.curv3"
+    namespace = "com.cruze"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.curv3"
+        applicationId = "com.cruze"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

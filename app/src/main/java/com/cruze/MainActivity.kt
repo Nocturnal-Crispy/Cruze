@@ -1,0 +1,313 @@
+package com.cruze
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.view.WindowManager
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DirectionsBike
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Route
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarDefaults
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.cruze.data.SavedTrack
+import com.cruze.garage.GarageViewModel
+import com.cruze.nav.LocationSource
+import com.cruze.ui.AppViewModel
+import com.cruze.ui.CruzeTheme
+import com.cruze.ui.GarageScreen
+import com.cruze.ui.GloveTarget
+import com.cruze.ui.NavScreen
+import com.cruze.ui.PlanScreen
+import com.cruze.ui.RidesScreen
+import com.cruze.ui.initOsmdroid
+
+class MainActivity : ComponentActivity() {
+
+    private lateinit var location: LocationSource
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        initOsmdroid(this)
+        location = LocationSource(this)
+        setContent { CruzeTheme { App(onPermissionGranted = { location.start() }) } }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // A rider should never have the screen time out mid-corner.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // The map needs to know where the rider is even when no ride is running.
+        location.start()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        location.stop()
+    }
+}
+
+private enum class Tab(val label: String, val icon: ImageVector) {
+    MAP("Map", Icons.Default.Map),
+    RIDE("Ride", Icons.Default.PlayArrow),
+    RIDES("Rides", Icons.Default.Route),
+    GARAGE("Garage", Icons.Default.DirectionsBike),
+}
+
+@Composable
+private fun App(
+    vm: AppViewModel = viewModel(),
+    garage: GarageViewModel = viewModel(),
+    onPermissionGranted: () -> Unit = {},
+) {
+    val ctx = LocalContext.current
+    val navigating by RideState.navigating.collectAsStateWithLifecycle()
+    val recording by RideState.recording.collectAsStateWithLifecycle()
+    val status by RideState.status.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    var tab by remember { mutableStateOf(Tab.MAP) }
+    var hasLocation by remember { mutableStateOf(ctx.hasLocationPermission()) }
+    var pendingWrite by remember { mutableStateOf<((Uri) -> Unit)?>(null) }
+
+    val permissions = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        hasLocation = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            ctx.hasLocationPermission()
+        if (hasLocation) onPermissionGranted()
+    }
+
+    LaunchedEffect(Unit) {
+        if (!hasLocation) {
+            permissions.launch(
+                buildList {
+                    add(Manifest.permission.ACCESS_FINE_LOCATION)
+                    add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                    if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+                }.toTypedArray()
+            )
+        }
+    }
+
+    LaunchedEffect(vm.message) { vm.message?.let { snackbar.showSnackbar(it); vm.message = null } }
+    LaunchedEffect(garage.message) { garage.message?.let { snackbar.showSnackbar(it); garage.message = null } }
+    LaunchedEffect(status) {
+        if (status.isNotBlank()) { snackbar.showSnackbar(status); RideState.setStatus("") }
+    }
+
+    // Jump straight to the riding view whenever guidance starts.
+    LaunchedEffect(navigating) { if (navigating) tab = Tab.RIDE }
+
+    val createFile = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri -> uri?.let { pendingWrite?.invoke(it) }; pendingWrite = null }
+
+    val openGpx = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm.importGpx(ctx, it) }
+    }
+
+    fun saveAs(name: String, writer: (Uri) -> Unit) {
+        pendingWrite = writer
+        createFile.launch(name)
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                tonalElevation = NavigationBarDefaults.Elevation,
+            ) {
+                Tab.entries.forEach { t ->
+                    NavigationBarItem(
+                        selected = tab == t,
+                        onClick = { tab = t },
+                        icon = { Icon(t.icon, contentDescription = t.label) },
+                        label = { Text(t.label, fontSize = 11.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                }
+            }
+        },
+    ) { pad ->
+        Column(Modifier.fillMaxSize().padding(pad)) {
+            if (!hasLocation) {
+                PermissionPrompt {
+                    permissions.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                        )
+                    )
+                }
+            }
+            when (tab) {
+                Tab.MAP -> PlanScreen(
+                    vm = vm,
+                    onStartNavigation = { vm.startNavigation(ctx) },
+                    onExport = { saveAs("cruze-route.gpx") { uri -> vm.exportCurrentPlan(ctx, uri) } },
+                    onImport = {
+                        openGpx.launch(
+                            arrayOf("application/gpx+xml", "application/xml", "text/xml", "*/*")
+                        )
+                    },
+                )
+
+                Tab.RIDE -> if (navigating) {
+                    NavScreen(vm) { vm.stopNavigation(ctx) }
+                } else {
+                    RideIdle(
+                        recording = recording,
+                        onStartRecording = { vm.startRecording(ctx) },
+                        // A finished ride adds its miles to the bike it was ridden on.
+                        onStopRecording = {
+                            vm.stopRecordingAndSave(ctx) { metres -> garage.addRideDistance(metres) }
+                        },
+                        onPlan = { tab = Tab.MAP },
+                    )
+                }
+
+                Tab.RIDES -> RidesScreen(vm) { t: SavedTrack ->
+                    saveAs("${t.name.safe()}.gpx") { uri -> vm.exportTrack(ctx, t, uri) }
+                }
+
+                Tab.GARAGE -> GarageScreen(garage) {
+                    saveAs("cruze-fuel-log.csv") { uri ->
+                        runCatching {
+                            ctx.contentResolver.openOutputStream(uri)?.use {
+                                it.write(garage.fuelCsv().toByteArray())
+                            }
+                        }.onSuccess { garage.message = "Fuel log exported." }
+                            .onFailure { garage.message = "Export failed: ${it.message}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PermissionPrompt(onGrant: () -> Unit) {
+    Column(Modifier.padding(16.dp)) {
+        Text("Cruze needs location access to plan from where you are, guide you, and record rides.")
+        Button(onClick = onGrant, modifier = Modifier.padding(top = 8.dp)) {
+            Text("Grant location access")
+        }
+    }
+}
+
+@Composable
+private fun RideIdle(
+    recording: Boolean,
+    onStartRecording: () -> Unit,
+    onStopRecording: () -> Unit,
+    onPlan: () -> Unit,
+) {
+    val track by RideState.track.collectAsStateWithLifecycle()
+    val fix by RideState.fix.collectAsStateWithLifecycle()
+
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (recording) {
+            Text(
+                fmtDist(trackDistanceM(track)),
+                fontSize = 52.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text("recording · ${track.size} points", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "${fmtSpeed(fix?.speedMps ?: 0f)} mph",
+                fontSize = 20.sp,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        } else {
+            Text("Ready to ride", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "Record a ride on its own, or plan a route and get voice guidance.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+
+        Button(
+            onClick = { if (recording) onStopRecording() else onStartRecording() },
+            modifier = Modifier.fillMaxWidth().height(GloveTarget).padding(top = 28.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = if (recording) {
+                ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            } else ButtonDefaults.buttonColors(),
+        ) { Text(if (recording) "Stop and save ride" else "Start recording", fontSize = 17.sp) }
+
+        if (!recording) {
+            Button(
+                onClick = onPlan,
+                modifier = Modifier.fillMaxWidth().height(GloveTarget).padding(top = 10.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                ),
+            ) { Text("Plan a route", fontSize = 17.sp) }
+        }
+    }
+}
+
+private fun android.content.Context.hasLocationPermission() =
+    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED
+
+private fun String.safe() = replace(Regex("[^A-Za-z0-9 _-]"), "").trim().ifBlank { "cruze" }
