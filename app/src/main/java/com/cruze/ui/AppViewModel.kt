@@ -54,6 +54,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var alerts by mutableStateOf<List<Weather.Alert>>(emptyList())
         private set
+
+    /** True when the warning service could not be reached, which is not the same as "all clear". */
+    var alertsUnavailable by mutableStateOf(false)
+        private set
     var plan by mutableStateOf<RoutePlan?>(null)
         private set
     var busy by mutableStateOf(false)
@@ -131,14 +135,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setLayer(l: MapLayer) { mapLayer = l }
 
-    /** Toggles the rain radar, refetching frame paths since RainViewer rotates them often. */
+    private var radarJob: Job? = null
+
+    /**
+     * Toggles the rain radar and then keeps it current.
+     *
+     * RainViewer publishes a new frame every ten minutes and expires the old paths. Fetching
+     * once at toggle-on meant the picture silently froze at whatever the sky was doing when the
+     * button was pressed, and eventually 404'd into a blank overlay.
+     */
     fun toggleRadar() {
         radarOn = !radarOn
+        radarJob?.cancel()
         if (!radarOn) {
             radarFrame = null
             return
         }
-        viewModelScope.launch {
+        radarJob = viewModelScope.launch {
+            while (true) {
+                refreshRadarFrame()
+                if (!radarOn) return@launch
+                kotlinx.coroutines.delay(5 * 60_000L)
+            }
+        }
+    }
+
+    private suspend fun refreshRadarFrame() {
+        run {
             runCatching { Weather.radarFrames() }
                 .onSuccess { frames ->
                     // The newest frame at or before now is the current picture of the sky.
@@ -147,15 +170,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (radarFrame == null) message = "No radar data available right now."
                 }
                 .onFailure {
-                    radarOn = false
-                    message = "Could not load rain radar."
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    // A later refresh failing must not tear down a radar that is working.
+                    if (radarFrame == null) {
+                        radarOn = false
+                        message = "Could not load rain radar."
+                    }
                 }
         }
     }
 
-    /** Weather warnings along the planned route. Silent on failure — it is advisory only. */
+    /**
+     * Weather warnings along the planned route.
+     *
+     * A failed lookup used to return an empty list, which is indistinguishable from "no
+     * warnings on your route" — the rider sees a clear banner either way and rides into a
+     * tornado warning believing it was checked. It now says plainly that it could not check.
+     */
     private fun refreshAlerts(shape: List<LatLon>) = viewModelScope.launch {
-        alerts = runCatching { Weather.alertsAlong(shape) }.getOrDefault(emptyList())
+        alerts = emptyList()
+        alertsUnavailable = false
+        runCatching { Weather.alertsAlong(shape) }
+            .onSuccess { alerts = it }
+            .onFailure { if (it !is kotlinx.coroutines.CancellationException) alertsUnavailable = true }
     }
 
     /** Labels a map-tapped point in the background; a failed lookup is not worth an error. */
@@ -224,7 +261,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         searchJob = viewModelScope.launch {
             runCatching { Nominatim.search(query, near) }
                 .onSuccess { searchResults = it }
-                .onFailure { message = it.message ?: "Search failed." }
+                .onFailure {
+                    // Every keystroke cancels the previous search. Reporting that cancellation
+                    // popped "Job was cancelled" at the rider while they were still typing.
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    message = it.message ?: "Search failed."
+                }
             searching = false
         }
     }

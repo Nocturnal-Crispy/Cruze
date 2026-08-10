@@ -59,8 +59,20 @@ class FallDetector(
     private val stoppedSpeed: Float = 1.0f,
     /** How long the bike must stay still after the event, ms. */
     private val stillnessMs: Long = 30_000L,
-    /** Beyond this the phone is lying over rather than mounted upright, degrees. */
+    /**
+     * Beyond this the phone is lying over rather than mounted upright, degrees.
+     * Only used until the mount's own resting angle has been learned — see [mountTiltDeg].
+     */
     private val fallenTiltDeg: Float = 60f,
+    /**
+     * How far the phone must tilt away from however it normally sits in its mount, degrees.
+     *
+     * An absolute threshold assumes every rider mounts their phone bolt upright. A tank-top
+     * cradle or a reclined bar mount already reads past 60°, so those riders were one hard stop
+     * away from a permanent false "fallen" reading. What actually indicates a fall is the phone
+     * moving away from where it has been sitting all ride.
+     */
+    private val tiltChangeDeg: Float = 35f,
     /** An unconfirmed suspicion expires after this, ms. */
     private val suspicionWindowMs: Long = 45_000L,
 ) {
@@ -70,6 +82,21 @@ class FallDetector(
     private var speedBeforeEvent = 0f
     private var movedSince = 0L
 
+    /**
+     * The resting tilt of this phone in this mount, learned while actually riding.
+     *
+     * Every mount sits at its own angle and no two riders' are the same, so this is measured
+     * rather than assumed. Null until enough riding has been seen to trust it, in which case
+     * the absolute threshold stands in.
+     */
+    private var mountTiltDeg: Float? = null
+
+    /** Whether the phone has moved far enough from its usual angle to look like a fall. */
+    private fun looksFallen(tiltDeg: Float): Boolean {
+        val baseline = mountTiltDeg ?: return tiltDeg >= fallenTiltDeg
+        return tiltDeg - baseline >= tiltChangeDeg
+    }
+
     val current: FallState get() = state
 
     fun reset() {
@@ -77,6 +104,7 @@ class FallDetector(
         lastSample = null
         speedBeforeEvent = 0f
         movedSince = 0L
+        // The baseline is deliberately kept: the phone is still in the same mount.
     }
 
     fun update(s: SensorSample): FallState {
@@ -84,6 +112,14 @@ class FallDetector(
         lastSample = s
 
         if (s.speedMps > stoppedSpeed) movedSince = s.atMs
+
+        // Learn the mount angle only while genuinely riding: stationary readings include the
+        // phone being taken out at a petrol stop, which is exactly the angle not to learn.
+        if (s.speedMps > ridingSpeed && state.phase == FallPhase.IDLE) {
+            val prev = mountTiltDeg
+            // Slow average — a single corner leaning the bike over must not move it much.
+            mountTiltDeg = if (prev == null) s.tiltDeg else prev * 0.98f + s.tiltDeg * 0.02f
+        }
 
         when (state.phase) {
             FallPhase.IDLE -> {
@@ -115,7 +151,7 @@ class FallDetector(
                     // Rider carried on — whatever it was, it was not a crash.
                     s.speedMps > ridingSpeed -> state = FallState(FallPhase.IDLE)
 
-                    movedRecently >= stillnessMs && s.tiltDeg >= fallenTiltDeg ->
+                    movedRecently >= stillnessMs && looksFallen(s.tiltDeg) ->
                         state = state.copy(
                             phase = FallPhase.CONFIRMED,
                             reason = "${state.reason}, stopped ${stillnessMs / 1000}s, phone tilted ${s.tiltDeg.toInt()}°",

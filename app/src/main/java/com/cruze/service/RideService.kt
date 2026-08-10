@@ -130,6 +130,25 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
         }
         // "I'M OK" must stand the detector down too, not just hide the countdown.
         GroupState.onFallDismissed = { fallDetector.reset() }
+
+        // Position broadcasting used to hang off the location callback, so it only happened
+        // while the phone was receiving GPS updates. Parked at a petrol stop, waiting at a
+        // meeting point, or anywhere the fix goes quiet, a rider stopped transmitting and aged
+        // off the rest of the group's roster after two and a half minutes — while their own
+        // screen still showed the group perfectly. The heartbeat has to be its own clock.
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(5_000)
+                if (GroupState.active) {
+                    GroupState.publishPositionIfDue(
+                        context = this@RideService,
+                        navigating = RideState.navigating.value,
+                        distToManeuverM = RideState.progress.value?.distToManeuverM,
+                    )
+                }
+                if (GroupState.fireFallIfElapsed()) speaker?.say("Alerting your group.")
+            }
+        }
         lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         sensors = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
         createChannel()
@@ -170,11 +189,11 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
             }
             ACTION_STOP_RECORD -> RideState.setRecording(false)
             ACTION_START_GROUP -> speaker = speaker ?: Speaker(this)
-            ACTION_STOP_ALL -> { stopEverything(); return START_NOT_STICKY }
+            ACTION_STOP_ALL -> { stopEverything(startId); return START_NOT_STICKY }
         }
 
         if (!RideState.navigating.value && !RideState.recording.value && !GroupState.active) {
-            stopEverything(); return START_NOT_STICKY
+            stopEverything(startId); return START_NOT_STICKY
         }
 
         startLocation()
@@ -357,7 +376,12 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
         if (!RideState.recording.value && !GroupState.active) stopEverything() else refreshNotification()
     }
 
-    private fun stopEverything() {
+    /**
+     * [startId] is the command asking us to stop. Passing it to stopSelf means a newer start
+     * that arrived while this one was being handled wins, instead of the service tearing itself
+     * down underneath a ride that has just begun.
+     */
+    private fun stopEverything(startId: Int = -1) {
         runCatching { lm.removeUpdates(this) }
         runCatching { sensors?.unregisterListener(this) }
         RideState.setNavigating(false)
@@ -367,7 +391,7 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
         speaker = null
         engine = null
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        if (startId >= 0) stopSelf(startId) else stopSelf()
     }
 
     override fun onDestroy() {

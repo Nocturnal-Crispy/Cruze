@@ -13,7 +13,9 @@ import java.util.UUID
  */
 class GarageStore(context: Context) {
 
+    private val appCtx = context.applicationContext
     private val file = File(context.filesDir, "garage.json")
+    private val mirror = GarageMirror(appCtx)
 
     data class Garage(
         val bikes: List<Bike> = emptyList(),
@@ -29,6 +31,12 @@ class GarageStore(context: Context) {
     }
 
     fun load(): Garage = runCatching {
+        // A reinstall wipes filesDir. Auto Backup only restores it when the rider happens to
+        // have Google backup switched on, which is not a guarantee — so a copy is kept in
+        // shared Documents, which survives uninstall, and is pulled back on a cold start.
+        if (!file.exists() || file.length() == 0L) {
+            mirror.read()?.let { file.writeText(it) }
+        }
         if (!file.exists()) return@runCatching Garage()
         val o = JSONObject(file.readText())
         Garage(
@@ -103,7 +111,26 @@ class GarageStore(context: Context) {
             })
             g.activeBikeId?.let { put("activeBikeId", it) }
         }
-        file.writeText(o.toString())
+        writeAtomically(o.toString())
+    }
+
+    /**
+     * Writes via a temp file and a rename.
+     *
+     * writeText truncates the file and then writes; a process killed in between — which on
+     * Android means any time the rider switches away at the wrong moment — left a truncated
+     * garage.json that would not parse, and the whole service history was gone. A rename is
+     * atomic, so the old file stands until the new one is complete.
+     */
+    private fun writeAtomically(text: String) {
+        val tmp = File(file.parentFile, "garage.json.tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(file)) {
+            // Rename can fail on some filesystems; falling back is still better than nothing.
+            file.writeText(text)
+            tmp.delete()
+        }
+        mirror.write(text)
     }
 
     /**
@@ -118,7 +145,7 @@ class GarageStore(context: Context) {
     fun importJson(text: String): Garage {
         val restored = runCatching {
             JSONObject(text)
-            file.writeText(text)
+            writeAtomically(text)
             load()
         }.getOrElse { throw IllegalArgumentException("That file is not a Cruze garage backup.") }
         return restored

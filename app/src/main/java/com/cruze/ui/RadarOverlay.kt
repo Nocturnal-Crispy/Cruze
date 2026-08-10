@@ -13,11 +13,17 @@ import org.osmdroid.views.overlay.TilesOverlay
  * whenever the frame changes rather than configured once.
  */
 private fun radarSource(framePath: String) = object : OnlineTileSourceBase(
-    // Zoom 15, not 12. RainViewer's radar is generated at low resolution, but it serves tiles
-    // at any zoom by upscaling — and osmdroid simply requests nothing above a source's declared
-    // maximum. Capping at 12 is why the radar vanished as soon as a rider zoomed in far enough
-    // to see the road they were on, which is the zoom they actually ride at.
-    "RainViewer-$framePath", 0, 15, 256, "",
+    // Zoom 7 is measured, not guessed: above it RainViewer returns one byte-identical
+    // "Zoom Level Not Supported" placeholder for every tile on Earth. The old value of 12 meant
+    // the map papered itself in that placeholder from z8 up, which is every zoom a rider
+    // actually uses — the reported "doesn't work under a certain zoom distance". Declaring the
+    // real maximum stops us fetching them, and osmdroid's approximater upscales the z7 tile to
+    // cover closer zooms: blurry, but rain in the right place beats a wall of grey labels.
+    // 256 px tiles, not RainViewer's 512. Both stop at z7; osmdroid upscales the last real
+    // tile to cover closer zooms, and the 256 grid keeps rain on screen a zoom level or two
+    // further in before it gives up. Detail per tile matters less than the layer still being
+    // there at the zoom someone rides at.
+    "RainViewer-$framePath", 0, 7, 256, "",
     arrayOf(framePath),
     "RainViewer.com",
 ) {
@@ -35,6 +41,12 @@ fun MapView.clearRadar() {
 
 /** Which radar frame is on the map, so it is only rebuilt when the frame actually changes. */
 private val RADAR_TAG = "cruze_radar_frame".hashCode()
+
+/**
+ * How solid the rain is drawn. Tuned on a real screen in daylight: enough to read the intensity
+ * at a glance, light enough that the road and the route line stay visible underneath.
+ */
+private const val RADAR_ALPHA = 0.5f
 
 /**
  * Shows [framePath]'s radar imagery. Rain is drawn semi-transparent and beneath the route so
@@ -58,7 +70,14 @@ fun MapView.showRadar(framePath: String) {
     val overlay = TilesOverlay(provider, context).apply {
         loadingBackgroundColor = android.graphics.Color.TRANSPARENT
         loadingLineColor = android.graphics.Color.TRANSPARENT
-        setColorFilter(null)
+        // RainViewer's tiles are fully opaque, so drawn as-is the rain covers the map and the
+        // rider cannot see the road they are asking about. A colour matrix that scales only the
+        // alpha channel is the one public hook TilesOverlay gives us for this.
+        setColorFilter(
+            android.graphics.ColorMatrixColorFilter(
+                android.graphics.ColorMatrix().apply { setScale(1f, 1f, 1f, RADAR_ALPHA) }
+            )
+        )
     }
     // Index 1 keeps it above the basemap but below markers and the route polyline.
     overlays.add(minOf(1, overlays.size), overlay)

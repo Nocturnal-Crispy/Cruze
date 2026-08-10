@@ -7,6 +7,7 @@ import com.cruze.route.Waypoint
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeNoException
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.net.InetAddress
 
@@ -30,6 +31,7 @@ class SurfaceTest {
             LatLon(41.4020, -80.3900) to LatLon(41.8742, -80.1315),
             LatLon(41.2339, -80.4931) to LatLon(41.2270, -80.2384),
         )
+        var checked = 0
         legs.forEach { (from, to) ->
             val plan = Valhalla.plan(
                 listOf(Waypoint(from, "from"), Waypoint(to, "to")),
@@ -40,6 +42,10 @@ class SurfaceTest {
                 "route ${fmtDist(plan.lengthM)}: unpaved ${"%.2f".format(report.unpavedFraction * 100)}%" +
                     " (${fmtDist(report.unpavedMetres)}) checked=${report.checked}"
             )
+            // An unchecked leg used to pass silently, so the one test guarding "no dirt roads"
+            // asserted nothing whenever the surface endpoint was unavailable — which looks
+            // identical to the rule working.
+            checked += if (report.checked) 1 else 0
             if (report.checked) {
                 assertTrue(
                     "route is ${"%.1f".format(report.unpavedFraction * 100)}% unpaved",
@@ -47,5 +53,9 @@ class SurfaceTest {
                 )
             }
         }
+        assumeTrue(
+            "surface data was unavailable for every leg — this proved nothing",
+            checked > 0,
+        )
     }
 }

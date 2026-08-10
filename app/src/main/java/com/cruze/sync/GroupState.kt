@@ -205,7 +205,11 @@ object GroupState {
         _sharedRoute.value = null
         _routeProgress.value = null
         assembler.clear()
-        onSessionChanged?.invoke(false)
+        // No stop-then-start bounce here. It sent STOP_ALL and START_GROUP to the service
+        // milliseconds apart; the STOP_ALL called stopSelf and cancelled the service's
+        // coroutine scope, and the START_GROUP that followed landed on the same instance —
+        // which then ran on with a dead scope and never broadcast a single position.
+        // repository.join() already tears down any previous ride.
         lastPublishAt = 0L
         lastPublished = null
         repository.join(s.joinCode, me(s, batteryPct = 100))
@@ -329,13 +333,25 @@ object GroupState {
     fun consumeEnded() { _endedBy.value = null }
 
     /** Hands the ride to another rider and steps back to being an ordinary rider. */
+    /**
+     * Passes the ride to [newLeaderId] and leaves.
+     *
+     * This is reached from "Leave ride", so it has to actually leave. It used only to demote
+     * the caller to RIDER, which left them still in the group looking at a screen they had just
+     * asked to leave, needing a second tap to get out.
+     */
     fun handOverTo(newLeaderId: String) {
         val s = _session.value ?: return
         if (s.role != RiderRole.LEADER) return
         _session.value = s.copy(role = RiderRole.RIDER)
         lastPublished = null
         lastPublishAt = 0L
-        scope.launch { repository.publish(RideEvent.Handover(s.riderId, newLeaderId, s.name)) }
+        scope.launch {
+            // Announce the new leader before going, or the group is briefly leaderless and a
+            // rider joining in that window is told the ride does not exist.
+            repository.publish(RideEvent.Handover(s.riderId, newLeaderId, s.name))
+            stop()
+        }
     }
 
     /** Ends the ride for the whole group. Only the leader can do this. */

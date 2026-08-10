@@ -271,7 +271,12 @@ private fun InRide(onShareRoute: () -> Unit) {
                         color = MaterialTheme.colorScheme.primary,
                         letterSpacing = 6.sp,
                     )
-                    qrBitmap(Wire.joinLink(s.joinCode, com.cruze.Settings.relayUrl))?.let {
+                    // remember: this rasterises 320x320 pixels one setPixel at a time, and the
+                    // group screen recomposes on every incoming ping.
+                    val qr = remember(s.joinCode, com.cruze.Settings.relayUrl) {
+                        qrBitmap(Wire.joinLink(s.joinCode, com.cruze.Settings.relayUrl))
+                    }
+                    qr?.let {
                         Image(
                             it.asImageBitmap(), "Join QR code",
                             Modifier.padding(top = 12.dp).size(160.dp),
