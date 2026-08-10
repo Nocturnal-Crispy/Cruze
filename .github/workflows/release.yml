@@ -1,0 +1,70 @@
+name: Release APK
+
+# Produces an installable APK whenever work lands on main — which is what a merged
+# pull request does. The APK is attached both as a workflow artifact and as a
+# rolling pre-release, so anyone can download and sideload it without a GitHub login.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Build APK
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Name the build
+        id: name
+        run: |
+          VERSION=$(grep -m1 'versionName' app/build.gradle.kts | cut -d'"' -f2)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "apk=cruze-${VERSION}-${GITHUB_RUN_NUMBER}.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Stage the APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/${{ steps.name.outputs.apk }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cruze-apk
+          path: dist/*.apk
+          retention-days: 90
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.name.outputs.tag }}
+          name: Cruze ${{ steps.name.outputs.version }} (build ${{ github.run_number }})
+          files: dist/*.apk
+          generate_release_notes: true
+          body: |
+            Debug-signed build of Cruze for sideloading.
+
+            **Install:** download the `.apk` below, then allow installation from
+            unknown sources when your phone prompts you.
+
+            This is signed with Android's shared debug key, not a private release
+            key, so it cannot be published to Play and will not upgrade in place
+            over a differently signed build.
