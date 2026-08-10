@@ -30,8 +30,10 @@ import java.util.concurrent.TimeUnit
  */
 class NtfyTransport(
     private val scope: CoroutineScope,
-    private val baseUrl: String = "https://ntfy.sh",
+    private val baseUrlProvider: () -> String = { com.cruze.Settings.relayUrl },
 ) : RideTransport {
+
+    private val baseUrl: String get() = baseUrlProvider()
 
     override val kind = TransportKind.CLOUD
 

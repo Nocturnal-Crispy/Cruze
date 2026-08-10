@@ -24,6 +24,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -55,7 +56,9 @@ import com.cruze.sync.RiderPing
 import com.cruze.sync.RiderRole
 import com.cruze.sync.TransportKind
 import com.cruze.sync.Wire
+import com.cruze.sync.effectiveRole
 import com.cruze.sync.gapsToLeader
+import com.cruze.sync.resolveLeaderId
 import com.cruze.sync.groupSpreadM
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
@@ -167,6 +170,8 @@ private fun InRide(onShareRoute: () -> Unit) {
     val roster by GroupState.roster.collectAsStateWithLifecycle()
     val status by GroupState.status.collectAsStateWithLifecycle()
     val alerts by GroupState.alerts.collectAsStateWithLifecycle()
+    val messages by GroupState.messages.collectAsStateWithLifecycle()
+    val routeProgress by GroupState.routeProgress.collectAsStateWithLifecycle()
     val fix by RideState.fix.collectAsStateWithLifecycle()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val s = session ?: return
@@ -179,7 +184,8 @@ private fun InRide(onShareRoute: () -> Unit) {
         roster + listOfNotNull(me)
     }
     val spread = groupSpreadM(everyone.map { it.pos })
-    val gaps = gapsToLeader(everyone, everyone.firstOrNull { it.role == RiderRole.LEADER }?.riderId)
+    val leaderId = resolveLeaderId(everyone)
+    val gaps = gapsToLeader(everyone, leaderId, com.cruze.Settings.lostRiderThresholdM)
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -212,6 +218,29 @@ private fun InRide(onShareRoute: () -> Unit) {
             }
         }
 
+        routeProgress?.let { pct ->
+            item {
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    ),
+                ) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            progress = { pct.coerceIn(0f, 1f) },
+                            modifier = Modifier.size(28.dp),
+                            strokeWidth = 3.dp,
+                        )
+                        Column(Modifier.padding(start = 14.dp)) {
+                            Text("Receiving the leader's route", fontWeight = FontWeight.SemiBold)
+                            Text("${(pct * 100).toInt()}%", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
                 GroupStat("${everyone.size}", "riders")
@@ -222,7 +251,10 @@ private fun InRide(onShareRoute: () -> Unit) {
 
         items(everyone) { r ->
             val gap = gaps.firstOrNull { it.ping.riderId == r.riderId }
-            RiderRow(r, gap?.metresBehindLeader, gap?.lost == true, fix?.pos?.let { distanceM(it, r.pos) })
+            RiderRow(
+                r, effectiveRole(r, leaderId), gap?.metresBehindLeader, gap?.lost == true,
+                fix?.pos?.let { distanceM(it, r.pos) },
+            )
         }
 
         item {
@@ -260,6 +292,30 @@ private fun InRide(onShareRoute: () -> Unit) {
                     contentColor = Color.White,
                 ),
             ) { Text("SOS — alert the group", fontSize = 17.sp, fontWeight = FontWeight.Bold) }
+        }
+
+        if (messages.isNotEmpty()) {
+            item {
+                Text("From the group", style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 8.dp))
+            }
+            items(messages.reversed().take(6)) { m ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(10.dp).background(riderColor(m.riderId), CircleShape))
+                    Text(
+                        "${m.name}: ${m.message}",
+                        modifier = Modifier.padding(start = 12.dp).weight(1f),
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                    )
+                    Text(
+                        clockOf(m.atMs),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
 
         if (alerts.isNotEmpty()) {
@@ -310,7 +366,13 @@ private fun InRide(onShareRoute: () -> Unit) {
 }
 
 @Composable
-private fun RiderRow(r: RiderPing, behindLeaderM: Double?, lost: Boolean, fromMeM: Double?) {
+private fun RiderRow(
+    r: RiderPing,
+    role: RiderRole,
+    behindLeaderM: Double?,
+    lost: Boolean,
+    fromMeM: Double?,
+) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -319,9 +381,9 @@ private fun RiderRow(r: RiderPing, behindLeaderM: Double?, lost: Boolean, fromMe
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(r.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                if (r.role != RiderRole.RIDER) {
+                if (role != RiderRole.RIDER) {
                     Text(
-                        "  ${r.role.name.lowercase()}",
+                        "  ${role.name.lowercase()}",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -389,6 +451,9 @@ private fun GroupStat(value: String, label: String) {
         Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
+
+private fun clockOf(ms: Long): String =
+    java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ms))
 
 /** Renders the join code as a QR so a pillion can scan it without typing at a petrol stop. */
 private fun qrBitmap(code: String, size: Int = 320): Bitmap? = runCatching {

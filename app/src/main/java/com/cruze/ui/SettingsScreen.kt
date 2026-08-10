@@ -113,6 +113,26 @@ fun SettingsScreen(versionName: String) {
             ) { Settings.updateLostRiderThreshold(it.toDouble()) }
         }
 
+        item {
+            OutlinedTextField(
+                value = Settings.relayUrl,
+                onValueChange = { Settings.updateRelayUrl(it) },
+                label = { Text("Group relay server") },
+                supportingText = {
+                    Text(
+                        if (Settings.relayUrl == Settings.DEFAULT_RELAY)
+                            "Free public relay. It rate-limits how often positions can be sent, " +
+                                "so a large group may see delayed updates. Point this at your " +
+                                "own ntfy server to remove that limit."
+                        else "Using your own relay.",
+                        fontSize = 11.sp,
+                    )
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
         item { Section("Safety") }
         item {
             SwitchRow(

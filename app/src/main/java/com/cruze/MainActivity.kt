@@ -58,13 +58,14 @@ import com.cruze.Settings
 import com.cruze.data.SavedTrack
 import com.cruze.garage.GarageViewModel
 import com.cruze.nav.LocationSource
+import com.cruze.service.RideService
 import com.cruze.ui.AppViewModel
 import com.cruze.ui.CruzeTheme
-import com.cruze.route.encodePolyline
 import com.cruze.sync.GroupState
 import com.cruze.ui.FallCountdownOverlay
 import com.cruze.ui.GarageScreen
 import com.cruze.ui.GroupScreen
+import com.cruze.ui.GroupToast
 import com.cruze.ui.GloveTarget
 import com.cruze.ui.NavScreen
 import com.cruze.ui.PlanScreen
@@ -145,6 +146,14 @@ private fun App(
                     if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
                 }.toTypedArray()
             )
+        }
+    }
+
+    // Starting or leaving a group starts or stops the service that broadcasts position.
+    LaunchedEffect(Unit) {
+        GroupState.onSessionChanged = { active ->
+            if (active) RideService.send(ctx, RideService.ACTION_START_GROUP)
+            else if (!navigating && !recording) RideService.send(ctx, RideService.ACTION_STOP_ALL)
         }
     }
 
@@ -244,7 +253,7 @@ private fun App(
                     if (p == null) {
                         vm.message = "Plan a route first, then push it to the group."
                     } else {
-                        GroupState.shareRoute(encodePolyline(p.shape), "Leader's route")
+                        GroupState.shareRoute(p)
                         vm.message = "Route pushed to the group."
                     }
                 })
@@ -276,6 +285,10 @@ private fun App(
             }
         }
     }
+
+    // Group chatter appears over the map and ride views, never over the group screen itself
+    // (it is already listed there) and never over a fall countdown.
+    if (tab == Tab.MAP || tab == Tab.RIDE) GroupToast()
 
     // Last child wins the z-order: a fall alert must cover every screen and the nav bar.
     FallCountdownOverlay()

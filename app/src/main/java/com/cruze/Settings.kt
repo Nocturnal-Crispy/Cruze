@@ -60,6 +60,15 @@ object Settings {
     var defaultLayer by mutableStateOf("DARK")
         private set
 
+    /**
+     * Group relay. The public instance is free but rate-limits publishing, so a rider who
+     * outgrows it can point this at their own ntfy server without a new build.
+     */
+    var relayUrl by mutableStateOf(DEFAULT_RELAY)
+        private set
+
+    const val DEFAULT_RELAY = "https://ntfy.sh"
+
     fun load(context: Context) {
         if (::prefs.isInitialized) return
         prefs = context.applicationContext.getSharedPreferences("cruze", Context.MODE_PRIVATE)
@@ -76,6 +85,7 @@ object Settings {
         lostRiderThresholdM = prefs.getFloat("lostRiderThresholdM", 1600f).toDouble()
         defaultStyle = prefs.getString("defaultStyle", "CURVY").orEmpty()
         defaultLayer = prefs.getString("defaultLayer", "DARK").orEmpty()
+        relayUrl = prefs.getString("relayUrl", DEFAULT_RELAY).orEmpty().ifBlank { DEFAULT_RELAY }
     }
 
     private fun edit(block: SharedPreferences.Editor.() -> Unit) {
@@ -107,4 +117,10 @@ object Settings {
 
     fun updateDefaultStyle(v: String) { defaultStyle = v; edit { putString("defaultStyle", v) } }
     fun updateDefaultLayer(v: String) { defaultLayer = v; edit { putString("defaultLayer", v) } }
+
+    fun updateRelayUrl(v: String) {
+        val clean = v.trim().trimEnd('/').ifBlank { DEFAULT_RELAY }
+        relayUrl = clean
+        edit { putString("relayUrl", clean) }
+    }
 }

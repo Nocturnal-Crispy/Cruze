@@ -38,8 +38,19 @@ enum class AlertKind {
 sealed interface RideEvent {
     data class Position(val ping: RiderPing) : RideEvent
 
-    /** The leader's route, as an encoded polyline so it fits in one message. */
-    data class Route(val riderId: String, val encodedShape: String, val name: String) : RideEvent
+    /**
+     * One slice of the leader's route. A route cannot fit in a single relay message, so it is
+     * sent as [count] numbered chunks identified by [routeId], which is a hash of the whole
+     * payload and doubles as the integrity check.
+     */
+    data class RouteChunk(
+        val riderId: String,
+        val routeId: String,
+        val index: Int,
+        val count: Int,
+        val payload: String,
+        val name: String,
+    ) : RideEvent
 
     data class Alert(
         val riderId: String,

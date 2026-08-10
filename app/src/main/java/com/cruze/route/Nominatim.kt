@@ -1,6 +1,5 @@
 package com.cruze.route
 
-import android.net.Uri
 import com.cruze.LatLon
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -33,20 +32,16 @@ object Nominatim {
 
     suspend fun search(query: String, near: LatLon?): List<Place> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
-        val url = Uri.parse("$BASE/search").buildUpon()
-            .appendQueryParameter("q", query)
-            .appendQueryParameter("format", "jsonv2")
-            .appendQueryParameter("limit", "8")
-            .apply {
-                // Bias results toward the map view without hard-filtering them out.
-                near?.let {
-                    appendQueryParameter(
-                        "viewbox",
-                        "${it.lon - 1.5},${it.lat + 1.0},${it.lon + 1.5},${it.lat - 1.0}"
-                    )
-                }
+        val params = buildList {
+            add("q" to query)
+            add("format" to "jsonv2")
+            add("limit" to "8")
+            // Bias results toward the map view without hard-filtering them out.
+            near?.let {
+                add("viewbox" to "${it.lon - 1.5},${it.lat + 1.0},${it.lon + 1.5},${it.lat - 1.0}")
             }
-            .build().toString()
+        }
+        val url = "$BASE/search?" + query(params)
 
         throttled { get(url) }.let { text ->
             val arr = JSONArray(text)
@@ -60,16 +55,27 @@ object Nominatim {
     }
 
     suspend fun reverse(pos: LatLon): String = withContext(Dispatchers.IO) {
-        val url = Uri.parse("$BASE/reverse").buildUpon()
-            .appendQueryParameter("lat", pos.lat.toString())
-            .appendQueryParameter("lon", pos.lon.toString())
-            .appendQueryParameter("format", "jsonv2")
-            .appendQueryParameter("zoom", "16")
-            .build().toString()
+        val url = "$BASE/reverse?" + query(
+            listOf(
+                "lat" to pos.lat.toString(),
+                "lon" to pos.lon.toString(),
+                "format" to "jsonv2",
+                "zoom" to "16",
+            )
+        )
         runCatching {
             org.json.JSONObject(throttled { get(url) }).optString("display_name")
         }.getOrDefault("").ifBlank { "%.4f, %.4f".format(pos.lat, pos.lon) }
     }
+
+    /**
+     * Builds the query string directly rather than through android.net.Uri, so geocoding can
+     * be exercised by plain JVM tests instead of only on a device.
+     */
+    private fun query(params: List<Pair<String, String>>): String =
+        params.joinToString("&") { (k, v) ->
+            "$k=" + java.net.URLEncoder.encode(v, "UTF-8")
+        }
 
     private fun get(url: String): String {
         val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()

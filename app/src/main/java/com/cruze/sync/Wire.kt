@@ -69,11 +69,14 @@ object Wire {
             put("r", p.role.name.first().toString())
         }
 
-        is RideEvent.Route -> JSONObject().apply {
-            put("t", "r")
+        is RideEvent.RouteChunk -> JSONObject().apply {
+            put("t", "rc")
             put("id", event.riderId)
             put("n", event.name)
-            put("sh", event.encodedShape)
+            put("rid", event.routeId)
+            put("ix", event.index)
+            put("ct", event.count)
+            put("d", event.payload)
         }
 
         is RideEvent.Alert -> JSONObject().apply {
@@ -130,7 +133,14 @@ object Wire {
                 )
             )
 
-            "r" -> RideEvent.Route(id, o.optString("sh"), name)
+            "rc" -> RideEvent.RouteChunk(
+                riderId = id,
+                routeId = o.optString("rid").ifBlank { return@runCatching null },
+                index = o.optInt("ix", -1),
+                count = o.optInt("ct", -1),
+                payload = o.optString("d"),
+                name = name,
+            )
 
             "a" -> RideEvent.Alert(
                 riderId = id,

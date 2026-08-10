@@ -172,7 +172,7 @@ class RideSyncManager(
 
 fun RideEvent.riderId(): String = when (this) {
     is RideEvent.Position -> ping.riderId
-    is RideEvent.Route -> riderId
+    is RideEvent.RouteChunk -> riderId
     is RideEvent.Alert -> riderId
     is RideEvent.Preset -> riderId
     is RideEvent.Left -> riderId

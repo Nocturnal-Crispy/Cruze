@@ -50,6 +50,24 @@ fun groupSpreadM(positions: List<LatLon>): Double {
     return worst
 }
 
+/**
+ * Exactly one leader, agreed on by every phone without any coordination.
+ *
+ * Two riders can both start a ride and both claim the role, which showed up as two "leader"
+ * labels and a nonsensical gap. The lowest rider id wins: it is arbitrary but deterministic,
+ * so every device in the group independently picks the same one.
+ */
+fun resolveLeaderId(roster: List<RiderPing>): String? =
+    roster.filter { it.role == RiderRole.LEADER }.minByOrNull { it.riderId }?.riderId
+        ?: roster.minByOrNull { it.riderId }?.riderId
+
+/** The role to actually display, after leader conflicts are resolved. */
+fun effectiveRole(ping: RiderPing, leaderId: String?): RiderRole = when {
+    ping.riderId == leaderId -> RiderRole.LEADER
+    ping.role == RiderRole.LEADER -> RiderRole.RIDER   // claimed it, but lost the tie-break
+    else -> ping.role
+}
+
 data class RiderGap(val ping: RiderPing, val metresBehindLeader: Double, val lost: Boolean)
 
 /**
@@ -64,7 +82,7 @@ fun gapsToLeader(
     thresholdM: Double = DEFAULT_LOST_THRESHOLD_M,
 ): List<RiderGap> {
     val leader = roster.firstOrNull { it.riderId == leaderId }
-        ?: roster.firstOrNull { it.role == RiderRole.LEADER }
+        ?: roster.firstOrNull { it.riderId == resolveLeaderId(roster) }
         ?: return roster.map { RiderGap(it, 0.0, false) }
 
     return roster.filterNot { it.riderId == leader.riderId }.map {

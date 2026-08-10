@@ -69,7 +69,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private var searchJob: Job? = null
 
-    init { refreshLibrary() }
+    init {
+        refreshLibrary()
+        // A route pushed by the leader becomes this rider's route, verbatim.
+        viewModelScope.launch {
+            com.cruze.sync.GroupState.sharedRoute.collect { shared ->
+                if (shared != null) {
+                    plan = shared
+                    waypoints = shared.waypoints
+                    style = shared.style
+                    RideState.setPlan(shared)
+                    message = "Route received from ${com.cruze.sync.GroupState.sharedRouteFrom.value}."
+                }
+            }
+        }
+    }
 
     // --- planning --------------------------------------------------------------------------
 

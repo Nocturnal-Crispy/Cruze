@@ -49,7 +49,7 @@ fun NavScreen(vm: AppViewModel, onStop: () -> Unit) {
 
     val nextManeuver = remember(progress, plan) {
         val p = progress ?: return@remember null
-        plan?.maneuvers?.getOrNull(p.maneuverIdx + 1)
+        plan?.maneuvers?.getOrNull(p.nextManeuverIdx)
     }
 
     Box(Modifier.fillMaxSize()) {

@@ -57,6 +57,13 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
         const val ACTION_START_RECORD = "com.cruze.START_RECORD"
         const val ACTION_STOP_RECORD = "com.cruze.STOP_RECORD"
         const val ACTION_STOP_ALL = "com.cruze.STOP_ALL"
+
+        /**
+         * A group ride needs this service even with no navigation or recording running: it is
+         * what broadcasts our position and speaks what the group says. Without it a rider joins
+         * a group and silently never appears on anyone else's map.
+         */
+        const val ACTION_START_GROUP = "com.cruze.START_GROUP"
         private const val CHANNEL = "ride"
         private const val NOTIF_ID = 1
 
@@ -78,11 +85,33 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
     private val fallDetector = FallDetector()
     private var sensors: android.hardware.SensorManager? = null
     private var lastTiltDeg = 0f
+    private var lastSpokenMessageAt = 0L
+    private var lastSpokenAlertAt = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        // Everything the group says is spoken. A rider must never have to read at speed.
+        scope.launch {
+            GroupState.messages.collect { list ->
+                val latest = list.lastOrNull() ?: return@collect
+                if (latest.atMs > lastSpokenMessageAt) {
+                    lastSpokenMessageAt = latest.atMs
+                    speaker?.say("${latest.name} says ${latest.message}")
+                }
+            }
+        }
+        scope.launch {
+            GroupState.alerts.collect { list ->
+                val latest = list.lastOrNull() ?: return@collect
+                if (latest.atMs > lastSpokenAlertAt) {
+                    lastSpokenAlertAt = latest.atMs
+                    val what = latest.kind.name.replace('_', ' ').lowercase()
+                    speaker?.say("Alert. ${latest.name}: $what.")
+                }
+            }
+        }
         lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         sensors = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
         createChannel()
@@ -113,10 +142,11 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
                 RideState.setRecording(true)
             }
             ACTION_STOP_RECORD -> RideState.setRecording(false)
+            ACTION_START_GROUP -> speaker = speaker ?: Speaker(this)
             ACTION_STOP_ALL -> { stopEverything(); return START_NOT_STICKY }
         }
 
-        if (!RideState.navigating.value && !RideState.recording.value) {
+        if (!RideState.navigating.value && !RideState.recording.value && !GroupState.active) {
             stopEverything(); return START_NOT_STICKY
         }
 
@@ -230,13 +260,19 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
             return
         }
 
-        val nextIdx = progress.maneuverIdx + 1
+        val nextIdx = progress.nextManeuverIdx
         val next = eng.maneuverAt(nextIdx)
         if (next != null) {
-            notifText = "${fmtTurnDist(progress.distToManeuverM)} · ${next.instruction}"
-            when (cues.next(nextIdx, progress.distToManeuverM, fix.speedMps.toDouble())) {
-                Cue.ALERT -> speaker?.say(next.verbalAlert.ifBlank { next.verbalPre })
-                Cue.PRE -> speaker?.say(next.verbalPre)
+            val followUp = eng.maneuverAt(progress.followUpManeuverIdx)
+            val thenPart = followUp?.let { ", then ${it.instruction.trimEnd('.')}" }.orEmpty()
+            notifText = "${fmtTurnDist(progress.distToManeuverM)} · ${next.instruction}$thenPart"
+            val cue = cues.next(
+                nextIdx, progress.distToManeuverM, fix.speedMps.toDouble(),
+                progress.followUpManeuverIdx,
+            )
+            when (cue) {
+                Cue.ALERT -> speaker?.say(next.verbalAlert.ifBlank { next.verbalPre } + thenPart)
+                Cue.PRE -> speaker?.say(next.verbalPre + thenPart)
                 else -> {}
             }
         } else {
@@ -287,7 +323,7 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
         engine = null
         RideState.setNavigating(false)
         RideState.setProgress(null)
-        if (!RideState.recording.value) stopEverything() else refreshNotification()
+        if (!RideState.recording.value && !GroupState.active) stopEverything() else refreshNotification()
     }
 
     private fun stopEverything() {
@@ -333,7 +369,8 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
         val title = when {
             RideState.navigating.value && RideState.recording.value -> "Navigating · recording"
             RideState.navigating.value -> "Navigating"
-            else -> "Recording ride · ${fmtDist(trackDistanceM(RideState.track.value))}"
+            RideState.recording.value -> "Recording ride · ${fmtDist(trackDistanceM(RideState.track.value))}"
+            else -> "Group ride"
         }
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_ride)

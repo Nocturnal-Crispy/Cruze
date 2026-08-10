@@ -14,11 +14,24 @@ const val OFF_ROUTE_M = 60.0
 /** Consecutive off-route fixes before rerouting — one bad GPS fix must not trigger it. */
 const val OFF_ROUTE_STRIKES = 3
 
+/** Two maneuvers closer than this are one instruction to a rider, not two. */
+const val COMBINE_MANEUVERS_M = 180.0
+
 data class NavProgress(
     val snapped: LatLon,
     val shapeIdx: Int,
     val distFromRouteM: Double,
     val maneuverIdx: Int,
+    /**
+     * The next maneuver genuinely ahead, or -1 at the end.
+     *
+     * Derived from position rather than "current + 1": Valhalla emits back-to-back turns only
+     * metres apart, and at speed a rider passes both between GPS samples. Indexing off the
+     * current maneuver silently skipped the second one, so the turn was never announced.
+     */
+    val nextManeuverIdx: Int,
+    /** A maneuver immediately after the next one, to be spoken in the same breath. */
+    val followUpManeuverIdx: Int,
     val distToManeuverM: Double,
     val remainingM: Double,
     val remainingS: Double,
@@ -63,16 +76,28 @@ class NavEngine(val plan: RoutePlan) {
         val remainingS = if (totalM > 0) plan.timeS * (remainingM / totalM) else 0.0
 
         val mIdx = currentManeuverIdx(snap.index)
-        val next = plan.maneuvers.getOrNull(mIdx + 1)
+        // First maneuver still ahead of us, however many we passed since the last fix.
+        val nextIdx = plan.maneuvers.indexOfFirst { it.beginIdx > snap.index }
+        val next = plan.maneuvers.getOrNull(nextIdx)
         val distToManeuver = if (next != null) {
             (cum.getOrElse(next.beginIdx) { totalM } - travelled).coerceAtLeast(0.0)
         } else remainingM
+
+        // A turn hard on the heels of the next one is announced with it, the way a person
+        // would say it: "turn left, then immediately right".
+        val followUp = plan.maneuvers.getOrNull(nextIdx + 1)
+        val followUpIdx = if (next != null && followUp != null &&
+            cum.getOrElse(followUp.beginIdx) { totalM } -
+            cum.getOrElse(next.beginIdx) { 0.0 } <= COMBINE_MANEUVERS_M
+        ) nextIdx + 1 else -1
 
         return NavProgress(
             snapped = snap.point,
             shapeIdx = snap.index,
             distFromRouteM = snap.distM,
             maneuverIdx = mIdx,
+            nextManeuverIdx = nextIdx,
+            followUpManeuverIdx = followUpIdx,
             distToManeuverM = distToManeuver,
             remainingM = remainingM,
             remainingS = remainingS,
@@ -103,11 +128,25 @@ class CuePlanner {
     private var spokenManeuver = -1
     private var spokenCue = Cue.NONE
 
+    /**
+     * Maneuvers already spoken as the ", then ..." tail of an earlier instruction.
+     *
+     * Without this a tightly-spaced pair is announced twice: once folded into its predecessor,
+     * then again on its own moments later.
+     */
+    private val covered = mutableSetOf<Int>()
+
     fun alertDistance(speedMps: Double) = (speedMps * 22.0).coerceIn(250.0, 1500.0)
     fun preDistance(speedMps: Double) = (speedMps * 5.0).coerceIn(60.0, 300.0)
 
-    /** Returns the cue to speak now, or null if nothing new is due. */
-    fun next(maneuverIdx: Int, distM: Double, speedMps: Double): Cue? {
+    /**
+     * The cue to speak now, or null if nothing new is due.
+     *
+     * [followUpIdx] is a maneuver being spoken in the same breath as this one; it is recorded
+     * so it is not announced a second time when the rider reaches it.
+     */
+    fun next(maneuverIdx: Int, distM: Double, speedMps: Double, followUpIdx: Int = -1): Cue? {
+        if (maneuverIdx in covered) return null
         if (maneuverIdx != spokenManeuver) {
             spokenManeuver = maneuverIdx
             spokenCue = Cue.NONE
@@ -126,11 +165,13 @@ class CuePlanner {
         }
         if (!progressed) return null
         spokenCue = due
+        if (followUpIdx >= 0) covered.add(followUpIdx)
         return due
     }
 
     fun reset() {
         spokenManeuver = -1
         spokenCue = Cue.NONE
+        covered.clear()
     }
 }
