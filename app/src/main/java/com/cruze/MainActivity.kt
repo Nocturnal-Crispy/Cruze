@@ -37,12 +37,14 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,7 +91,7 @@ class MainActivity : ComponentActivity() {
         handleJoinLink(intent)
         setContent {
             CruzeTheme(dark = Settings.darkTheme) {
-                App(onPermissionGranted = { location.start() })
+                App(onPermissionGranted = { location.start() }, onServiceIdle = { location.start() })
             }
         }
     }
@@ -116,8 +118,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // A rider should never have the screen time out mid-corner.
-        if (Settings.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        applyKeepScreenOn()
         // The map needs to know where the rider is even when no ride is running.
         location.start()
     }
@@ -126,6 +127,16 @@ class MainActivity : ComponentActivity() {
         super.onPause()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         location.stop()
+    }
+
+    /**
+     * A rider should never have the screen time out mid-corner — and turning the setting off
+     * should hand control back straight away. This used to run only in onResume, so the switch
+     * appeared to do nothing until the app had been backgrounded and reopened.
+     */
+    fun applyKeepScreenOn() {
+        if (Settings.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 }
 
@@ -143,6 +154,7 @@ private fun App(
     vm: AppViewModel = viewModel(),
     garage: GarageViewModel = viewModel(),
     onPermissionGranted: () -> Unit = {},
+    onServiceIdle: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val navigating by RideState.navigating.collectAsStateWithLifecycle()
@@ -151,33 +163,73 @@ private fun App(
     val snackbar = remember { SnackbarHostState() }
     var tab by remember { mutableStateOf(Tab.MAP) }
     var hasLocation by remember { mutableStateOf(ctx.hasLocationPermission()) }
+    // What to write once the rider picks a destination. The activity handles its own config
+    // changes, so this survives rotation and folding; it cannot survive the process being
+    // killed while the picker is open, and a lambda is not something rememberSaveable can
+    // restore. In that case the export is simply announced as lost rather than silently
+    // producing an empty file the rider only discovers later.
     var pendingWrite by remember { mutableStateOf<((Uri) -> Unit)?>(null) }
+
+    // Whether the system dialog has been shown once already. After two refusals Android stops
+    // showing it at all and auto-denies, so a second tap of "Grant" would do nothing visible —
+    // at that point the only way through is the app's own settings page.
+    var askedOnce by rememberSaveable { mutableStateOf(false) }
 
     val permissions = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         hasLocation = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            result[Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
             ctx.hasLocationPermission()
+        askedOnce = true
         if (hasLocation) onPermissionGranted()
     }
 
+    fun askForPermissions() {
+        permissions.launch(
+            buildList {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                // Requested alongside location rather than only when location is missing.
+                // Bundled inside that branch, a rider who granted location on the first run
+                // could never be asked for notifications at all — and the ride notification is
+                // the only way to get back to guidance from another app.
+                if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+            }.toTypedArray()
+        )
+    }
+
     LaunchedEffect(Unit) {
-        if (!hasLocation) {
-            permissions.launch(
-                buildList {
-                    add(Manifest.permission.ACCESS_FINE_LOCATION)
-                    add(Manifest.permission.ACCESS_COARSE_LOCATION)
-                    if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-                }.toTypedArray()
-            )
+        if (!hasLocation || (Build.VERSION.SDK_INT >= 33 && !ctx.hasNotificationPermission())) {
+            askForPermissions()
         }
+    }
+
+    // Coming back from the system settings page, pick up whatever was granted there.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.addObserver(
+            androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                    val now = ctx.hasLocationPermission()
+                    if (now && !hasLocation) onPermissionGranted()
+                    hasLocation = now
+                }
+            }
+        )
     }
 
     // Starting or leaving a group starts or stops the service that broadcasts position.
     LaunchedEffect(Unit) {
         GroupState.onSessionChanged = { active ->
-            if (active) RideService.send(ctx, RideService.ACTION_START_GROUP)
-            else if (!navigating && !recording) RideService.send(ctx, RideService.ACTION_STOP_ALL)
+            if (active) {
+                RideService.send(ctx, RideService.ACTION_START_GROUP)
+            } else if (!navigating && !recording) {
+                RideService.send(ctx, RideService.ACTION_STOP_ALL)
+                // The service was the only thing feeding the map a position; hand GPS back to
+                // the foreground source, or the blue dot freezes until the app is reopened.
+                onServiceIdle()
+            }
         }
     }
 
@@ -207,7 +259,13 @@ private fun App(
 
     val createFile = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
-    ) { uri -> uri?.let { pendingWrite?.invoke(it) }; pendingWrite = null }
+    ) { uri ->
+        val writer = pendingWrite
+        pendingWrite = null
+        if (uri == null) return@rememberLauncherForActivityResult
+        if (writer == null) vm.message = "Export was interrupted. Try it again."
+        else writer(uri)
+    }
 
     val openGpx = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { vm.importGpx(ctx, it) }
@@ -251,16 +309,7 @@ private fun App(
         },
     ) { pad ->
         Column(Modifier.fillMaxSize().padding(pad)) {
-            if (!hasLocation) {
-                PermissionPrompt {
-                    permissions.launch(
-                        arrayOf(
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-                            Manifest.permission.ACCESS_COARSE_LOCATION,
-                        )
-                    )
-                }
-            }
+            if (!hasLocation) PermissionPrompt(askedOnce) { askForPermissions() }
             when (tab) {
                 Tab.MAP -> PlanScreen(
                     vm = vm,
@@ -334,12 +383,47 @@ private fun App(
     }
 }
 
+/**
+ * Shown whenever location is missing. Nothing in the app works without it — no map centring,
+ * no guidance, no group position — so this is a banner over every screen rather than a page
+ * the rider has to go and find.
+ *
+ * [askedOnce] changes what the button can usefully do: Android stops showing its dialog after
+ * two refusals and silently auto-denies, so once we have already asked, the only route through
+ * is the app's own settings page.
+ */
 @Composable
-private fun PermissionPrompt(onGrant: () -> Unit) {
-    Column(Modifier.padding(16.dp)) {
-        Text("Cruze needs location access to plan from where you are, guide you, and record rides.")
-        Button(onClick = onGrant, modifier = Modifier.padding(top = 8.dp)) {
-            Text("Grant location access")
+private fun PermissionPrompt(askedOnce: Boolean, onGrant: () -> Unit) {
+    val ctx = LocalContext.current
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth().padding(12.dp),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                "Cruze needs location access to plan from where you are, guide you, record " +
+                    "rides, and show you to your group.",
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Button(
+                onClick = {
+                    if (askedOnce) {
+                        ctx.startActivity(
+                            Intent(
+                                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", ctx.packageName, null),
+                            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    } else {
+                        onGrant()
+                    }
+                },
+                modifier = Modifier.padding(top = 10.dp).height(GloveTarget),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Text(if (askedOnce) "Open app settings" else "Grant location access")
+            }
         }
     }
 }
@@ -422,6 +506,13 @@ private fun writeText(
 
 private fun android.content.Context.hasLocationPermission() =
     ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED
+
+private fun android.content.Context.hasNotificationPermission() =
+    Build.VERSION.SDK_INT < 33 ||
+        ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
         PackageManager.PERMISSION_GRANTED
 
 private fun appVersion(ctx: android.content.Context): String = runCatching {

@@ -130,6 +130,25 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
         }
         // "I'M OK" must stand the detector down too, not just hide the countdown.
         GroupState.onFallDismissed = { fallDetector.reset() }
+
+        // Position broadcasting used to hang off the location callback, so it only happened
+        // while the phone was receiving GPS updates. Parked at a petrol stop, waiting at a
+        // meeting point, or anywhere the fix goes quiet, a rider stopped transmitting and aged
+        // off the rest of the group's roster after two and a half minutes — while their own
+        // screen still showed the group perfectly. The heartbeat has to be its own clock.
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(5_000)
+                if (GroupState.active) {
+                    GroupState.publishPositionIfDue(
+                        context = this@RideService,
+                        navigating = RideState.navigating.value,
+                        distToManeuverM = RideState.progress.value?.distToManeuverM,
+                    )
+                }
+                if (GroupState.fireFallIfElapsed()) speaker?.say("Alerting your group.")
+            }
+        }
         lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         sensors = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
         createChannel()

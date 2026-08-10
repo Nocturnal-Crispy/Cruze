@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import com.cruze.Fix
 import com.cruze.LatLon
 import com.cruze.RideState
+import com.cruze.sync.GroupState
 
 /**
  * Foreground location for the map screen.
@@ -30,10 +31,18 @@ class LocationSource(context: Context) : LocationListener {
         appCtx, Manifest.permission.ACCESS_FINE_LOCATION
     ) == PackageManager.PERMISSION_GRANTED
 
+    /**
+     * A group ride runs the service too, and it was missing from this check — so for the whole
+     * of every group ride the app held a second set of location updates the service was already
+     * receiving, at 2 s intervals, for nothing.
+     */
+    private fun serviceOwnsGps() =
+        RideState.navigating.value || RideState.recording.value || GroupState.active
+
     @SuppressLint("MissingPermission")
     fun start() {
         if (active || !hasPermission()) return
-        if (RideState.navigating.value || RideState.recording.value) return
+        if (serviceOwnsGps()) return
 
         // Seed immediately from the last known fix so the map can centre without waiting the
         // 10-30 s a cold GPS lock can take.
@@ -68,7 +77,7 @@ class LocationSource(context: Context) : LocationListener {
 
     override fun onLocationChanged(loc: Location) {
         // The service is authoritative once a ride starts.
-        if (RideState.navigating.value || RideState.recording.value) {
+        if (serviceOwnsGps()) {
             stop()
             return
         }

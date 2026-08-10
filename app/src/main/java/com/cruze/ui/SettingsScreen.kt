@@ -40,6 +40,7 @@ import com.cruze.route.RouteStyle
 
 @Composable
 fun SettingsScreen(versionName: String) {
+    val activity = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -59,7 +60,23 @@ fun SettingsScreen(versionName: String) {
                 "Keep the screen on",
                 "Never time out mid-corner while the app is open.",
                 Settings.keepScreenOn,
-            ) { Settings.updateKeepScreenOn(it) }
+            ) {
+                Settings.updateKeepScreenOn(it)
+                // Apply it now rather than at the next onResume, or the switch looks broken.
+                (activity as? com.cruze.MainActivity)?.applyKeepScreenOn()
+            }
+        }
+        item {
+            SwitchRow(
+                "Light theme",
+                "Dark is the default, and easier to read at night behind a visor.",
+                !Settings.darkTheme,
+            ) {
+                Settings.updateDarkTheme(!it)
+                // The theme is read once when the activity builds its content, so it has to be
+                // recreated for the change to be visible at all.
+                activity?.recreate()
+            }
         }
         item {
             SwitchRow(

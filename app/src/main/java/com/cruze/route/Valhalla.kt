@@ -143,7 +143,12 @@ object Valhalla {
                     put(JSONObject().apply {
                         put("lat", w.pos.lat)
                         put("lon", w.pos.lon)
-                        put("type", if (i == 0 || i == waypoints.lastIndex) "break" else "through")
+                        // "via", not "through". Both pass through without stopping, but
+                        // through forbids a u-turn at the point: a waypoint dropped on the
+                        // far carriageway, or at the end of a dead-end lane, then had to be
+                        // approached from the "correct" side, sending the rider miles around
+                        // a block to reach somewhere they were standing next to.
+                        put("type", if (i == 0 || i == waypoints.lastIndex) "break" else "via")
                     })
                 }
             })

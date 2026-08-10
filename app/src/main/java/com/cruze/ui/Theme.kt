@@ -101,7 +101,7 @@ private val RiderType = Typography(
 /** Minimum comfortable touch target with gloves on. */
 val GloveTarget = 56.dp
 
-/** Dark is the default — [dark] exists only so a rider can override it in settings. */
+/** Dark is the default; [dark] is wired to the "Light theme" switch in settings. */
 @Composable
 fun CruzeTheme(dark: Boolean = true, content: @Composable () -> Unit) {
     MaterialTheme(

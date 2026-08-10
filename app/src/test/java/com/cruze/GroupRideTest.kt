@@ -222,6 +222,35 @@ class GroupRideTest {
         assertEquals(FallPhase.CONFIRMED, replay(samples))
     }
 
+    /**
+     * A tank-top cradle holds the phone nearly flat, well past the old absolute 60° threshold.
+     * Those riders were one hard stop away from a permanent false alarm, because the phone
+     * already "looked fallen" sitting exactly where it always sits.
+     */
+    @Test
+    fun `a nearly-flat tank mount is not a crash just because it is flat`() {
+        val samples = buildList {
+            // Twenty seconds of normal riding with the phone lying at 70° in its cradle.
+            addAll((0 until 20).map { SensorSample(it * 1000L, 9.8f, 70f, 25f) })
+            add(SensorSample(20_000, 55f, 70f, 22f))   // hard stop, phone never moves
+            // Long enough to outlast the suspicion window: the tilt never agrees, because the
+            // phone is exactly where it always is, so the suspicion has to expire on its own.
+            addAll(stopped(21_000, 50, tilt = 70f))
+        }
+        assertEquals(FallPhase.IDLE, replay(samples))
+    }
+
+    /** The same mount, genuinely down: what matters is the change from where it normally sits. */
+    @Test
+    fun `a crash on a flat tank mount is still caught`() {
+        val samples = buildList {
+            addAll((0 until 20).map { SensorSample(it * 1000L, 9.8f, 70f, 25f) })
+            add(SensorSample(20_000, 55f, 70f, 22f))
+            addAll(stopped(21_000, 40, tilt = 110f))   // laid right over
+        }
+        assertEquals(FallPhase.CONFIRMED, replay(samples))
+    }
+
     @Test
     fun `a pothole is not a crash - the rider keeps going`() {
         val samples = buildList {

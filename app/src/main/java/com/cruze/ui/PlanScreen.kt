@@ -521,19 +521,35 @@ private fun Sheet(
 /** Weather warnings covering the planned route. Advisory, never blocking. */
 @Composable
 private fun BoxScope.AlertBanner(vm: AppViewModel) {
-    val worst = vm.alerts.firstOrNull() ?: return
+    val worst = vm.alerts.firstOrNull()
+    // No banner at all reads as "checked, all clear". When the check itself failed the rider
+    // has to be told that, or they ride into a warning believing it was looked for.
+    if (worst == null && !vm.alertsUnavailable) return
     Surface(
-        color = if (worst.urgent) MaterialTheme.colorScheme.errorContainer
-        else MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = when {
+            worst?.urgent == true -> MaterialTheme.colorScheme.errorContainer
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        },
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.align(Alignment.TopStart).padding(top = 84.dp, start = 12.dp, end = 12.dp),
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error)
+            Icon(
+                Icons.Default.Warning, null,
+                tint = if (worst == null) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.error,
+            )
             Column(Modifier.padding(start = 10.dp)) {
-                Text(worst.event, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
                 Text(
-                    if (vm.alerts.size > 1) "${worst.area} · +${vm.alerts.size - 1} more" else worst.area,
+                    worst?.event ?: "Weather warnings unavailable",
+                    fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1,
+                )
+                Text(
+                    when {
+                        worst == null -> "Could not reach the warning service — check before you go."
+                        vm.alerts.size > 1 -> "${worst.area} · +${vm.alerts.size - 1} more"
+                        else -> worst.area
+                    },
                     fontSize = 12.sp,
                     maxLines = 1,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
