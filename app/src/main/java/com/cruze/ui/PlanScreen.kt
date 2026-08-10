@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Layers
@@ -104,7 +105,7 @@ fun PlanScreen(
 
     // Frame the whole route the moment one is found, and surface the sheet with the result.
     LaunchedEffect(vm.plan) {
-        vm.plan?.let { mapRef?.zoomTo(it.shape); sheetVisible = true }
+        vm.plan?.let { mapRef?.zoomTo(it.shape, padding = 240); sheetVisible = true }
     }
     LaunchedEffect(vm.waypoints.size) { if (vm.waypoints.isNotEmpty()) sheetVisible = true }
 
@@ -163,6 +164,20 @@ fun PlanScreen(
 
         SideControls(
             vm = vm,
+            showFitRiders = groupRoster.isNotEmpty(),
+            onFitRiders = {
+                // Riders are drawn with or without a route, but they are useless off-screen.
+                val pts = groupRoster.map { it.pos } + listOfNotNull(fix?.pos)
+                // The sheet covers the lower half, so fitting to the full viewport would push
+                // half the group underneath it. Get it out of the way first.
+                sheetVisible = false
+                if (pts.size < 2) {
+                    pts.firstOrNull()?.let { mapRef?.controller?.animateTo(it.geo()) }
+                        ?: run { vm.message = "No riders reporting yet." }
+                } else {
+                    mapRef?.zoomTo(pts, padding = 220)
+                }
+            },
             onRecentre = {
                 fix?.let { mapRef?.controller?.animateTo(it.pos.geo()) }
                     ?: run { vm.message = "No GPS fix yet." }
@@ -275,7 +290,12 @@ private fun BoxScope.TopControls(
 }
 
 @Composable
-private fun BoxScope.SideControls(vm: AppViewModel, onRecentre: () -> Unit) {
+private fun BoxScope.SideControls(
+    vm: AppViewModel,
+    showFitRiders: Boolean,
+    onFitRiders: () -> Unit,
+    onRecentre: () -> Unit,
+) {
     var layersOpen by remember { mutableStateOf(false) }
     Column(
         Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
@@ -302,6 +322,9 @@ private fun BoxScope.SideControls(vm: AppViewModel, onRecentre: () -> Unit) {
             if (vm.radarOn) "Hide rain radar" else "Show rain radar",
             tint = if (vm.radarOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
         ) { vm.toggleRadar() }
+        if (showFitRiders) {
+            RoundControl(Icons.Default.Group, "Fit all riders", onClick = onFitRiders)
+        }
         RoundControl(Icons.Default.MyLocation, "Centre on me", onClick = onRecentre)
     }
 }

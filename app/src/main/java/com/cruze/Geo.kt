@@ -130,6 +130,13 @@ const val MPS_TO_MPH = 2.2369363
 fun metresToMiles(m: Double) = m / M_PER_MILE
 
 fun fmtDist(m: Double): String {
+    if (Settings.metric) {
+        return when {
+            m < 950 -> "${(m / 10).toInt() * 10} m"
+            m < 10_000 -> String.format("%.1f km", m / 1000)
+            else -> "${(m / 1000).toInt()} km"
+        }
+    }
     val miles = metresToMiles(m)
     return when {
         miles < 0.1 -> "${((m / M_PER_FOOT) / 10).toInt() * 10} ft"
@@ -146,15 +153,20 @@ fun fmtDur(sec: Double): String {
 }
 
 fun fmtTurnDist(m: Double): String {
-    val miles = metresToMiles(m)
-    return when {
-        m < 30 -> "now"
-        miles < 0.19 -> "${((m / M_PER_FOOT) / 50).toInt() * 50} ft"
-        else -> String.format("%.1f mi", miles)
+    if (m < 30) return "now"
+    if (Settings.metric) {
+        return if (m < 950) "${(m / 10).toInt() * 10} m" else String.format("%.1f km", m / 1000)
     }
+    val miles = metresToMiles(m)
+    return if (miles < 0.19) "${((m / M_PER_FOOT) / 50).toInt() * 50} ft"
+    else String.format("%.1f mi", miles)
 }
 
-fun fmtSpeed(mps: Float): String = "${(mps * MPS_TO_MPH).toInt()}"
+fun fmtSpeed(mps: Float): String =
+    if (Settings.metric) "${(mps * 3.6f).toInt()}" else "${(mps * MPS_TO_MPH).toInt()}"
+
+/** Unit label for a speed readout. */
+fun speedUnit(): String = if (Settings.metric) "km/h" else "mph"
 
 internal fun sq(x: Double) = x * x
 

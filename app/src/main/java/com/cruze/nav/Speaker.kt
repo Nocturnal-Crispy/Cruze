@@ -35,7 +35,7 @@ class Speaker(context: Context) {
     }
 
     fun say(text: String) {
-        if (!enabled || !ready || text.isBlank()) return
+        if (!enabled || !com.cruze.Settings.voiceGuidance || !ready || text.isBlank()) return
         requestFocus()
         tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "cruze")
     }

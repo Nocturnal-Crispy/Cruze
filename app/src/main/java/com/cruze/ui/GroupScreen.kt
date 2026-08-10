@@ -66,7 +66,9 @@ fun riderColor(riderId: String): Color {
         0xFFFF3B30, 0xFF32D74B, 0xFF0A84FF, 0xFFFFD60A,
         0xFFBF5AF2, 0xFFFF9F0A, 0xFF64D2FF, 0xFFFF6482,
     )
-    val idx = (riderId.hashCode().toLong() and 0xFFFFFFFFL).toInt() % palette.size
+    // Take the modulo while still a Long: toInt() would truncate the masked value straight
+    // back into a negative Int, which indexed the palette at -1 and crashed the roster.
+    val idx = ((riderId.hashCode().toLong() and 0xFFFFFFFFL) % palette.size).toInt()
     return Color(palette[idx])
 }
 
@@ -78,7 +80,7 @@ fun GroupScreen(onShareRoute: () -> Unit) {
 
 @Composable
 private fun StartOrJoin() {
-    var name by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf(com.cruze.Settings.riderName) }
     var joining by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -96,7 +98,7 @@ private fun StartOrJoin() {
 
         OutlinedTextField(
             value = name,
-            onValueChange = { name = it.take(16) },
+            onValueChange = { name = it.take(16); com.cruze.Settings.updateRiderName(name) },
             label = { Text("Your name") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
@@ -353,11 +355,9 @@ private fun RiderRow(r: RiderPing, behindLeaderM: Double?, lost: Boolean, fromMe
 /** Shows which pipe the group is really using — invaluable when debugging a dropout later. */
 @Composable
 fun TransportChip(kind: TransportKind, connected: Boolean, queued: Int) {
-    val color = when {
-        !connected -> MaterialTheme.colorScheme.error
-        kind == TransportKind.PEER -> Color(0xFF32D74B)
-        else -> MaterialTheme.colorScheme.primary
-    }
+    // Green means traffic is flowing. In a red-on-black theme "connected" must never be red,
+    // or it reads identically to "down".
+    val color = if (connected) Color(0xFF32D74B) else MaterialTheme.colorScheme.error
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -369,7 +369,11 @@ fun TransportChip(kind: TransportKind, connected: Boolean, queued: Int) {
         ) {
             Box(Modifier.size(8.dp).background(color, CircleShape))
             Text(
-                if (queued > 0) "${kind.label} · $queued queued" else kind.label,
+                when {
+                    !connected -> "Offline · $queued queued"
+                    queued > 0 -> "${kind.label} · $queued queued"
+                    else -> kind.label
+                },
                 fontSize = 12.sp,
                 modifier = Modifier.padding(start = 8.dp),
             )

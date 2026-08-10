@@ -52,6 +52,9 @@ class NtfyTransport(
     private var topic: String? = null
     private var listenJob: Job? = null
 
+    /** Set when the relay rate-limits us; nothing is sent again until it passes. */
+    @Volatile private var throttledUntilMs = 0L
+
     override suspend fun connect(groupTopic: String) {
         disconnect()
         topic = groupTopic
@@ -107,6 +110,7 @@ class NtfyTransport(
 
     override suspend fun send(event: RideEvent): Boolean = withContext(Dispatchers.IO) {
         val t = topic ?: return@withContext false
+        if (System.currentTimeMillis() < throttledUntilMs) return@withContext false
         runCatching {
             val req = Request.Builder()
                 .url("$baseUrl/$t")
@@ -117,7 +121,19 @@ class NtfyTransport(
                 .header("Firebase", "no")
                 .post(Wire.encode(event).toRequestBody(plain))
                 .build()
-            client.newCall(req).execute().use { it.isSuccessful }
+            client.newCall(req).execute().use { resp ->
+                if (resp.code == 429) {
+                    // Free relay bucket is empty. Hold off, and let the caller queue the event
+                    // so a breadcrumb trail is delayed rather than lost.
+                    throttledUntilMs = System.currentTimeMillis() + 30_000L
+                    _status.value = TransportStatus(
+                        TransportKind.CLOUD, connected = true,
+                        detail = "relay rate-limited, backing off",
+                    )
+                    return@use false
+                }
+                resp.isSuccessful
+            }
         }.getOrDefault(false)
     }
 }

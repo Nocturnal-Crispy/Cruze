@@ -27,12 +27,14 @@ fun updateIntervalMs(
 ): Long = when {
     // Parked at a petrol stop: nothing is changing, so say almost nothing.
     stationary -> 30_000L
-    // A junction is where groups actually get split up.
-    navigating && (distanceToManeuverM ?: Double.MAX_VALUE) < 400 -> 1_000L
+    // A junction is where groups actually get split up. Measured against the public relay,
+    // anything faster than ~3 s sustained drains its rate-limit bucket and starts 429ing,
+    // so this is the floor rather than the 1 s the map would ideally like.
+    navigating && (distanceToManeuverM ?: Double.MAX_VALUE) < 400 -> 3_000L
     // Strung out — the whole point is watching the gap.
-    spreadM > 800 -> 2_000L
-    spreadM > 300 -> 5_000L
-    else -> 10_000L
+    spreadM > 800 -> 5_000L
+    spreadM > 300 -> 8_000L
+    else -> 12_000L
 }
 
 /** Front-to-back length of the group along the ground, in metres. */

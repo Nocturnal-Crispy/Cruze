@@ -37,11 +37,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     var waypoints by mutableStateOf<List<Waypoint>>(emptyList())
         private set
-    var style by mutableStateOf(RouteStyle.CURVY)
+    var style by mutableStateOf(
+        runCatching { RouteStyle.valueOf(com.cruze.Settings.defaultStyle) }.getOrDefault(RouteStyle.CURVY)
+    )
         private set
     var roundTrip by mutableStateOf(false)
         private set
-    var mapLayer by mutableStateOf(MapLayer.DARK)
+    var mapLayer by mutableStateOf(
+        runCatching { MapLayer.valueOf(com.cruze.Settings.defaultLayer) }.getOrDefault(MapLayer.DARK)
+    )
         private set
 
     var radarOn by mutableStateOf(false)

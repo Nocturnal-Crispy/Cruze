@@ -167,8 +167,10 @@ class RideService : Service(), LocationListener, android.hardware.SensorEventLis
             tiltDeg = lastTiltDeg,
             speedMps = RideState.fix.value?.speedMps ?: 0f,
         )
-        if (fallDetector.update(sample).phase == FallPhase.CONFIRMED && GroupState.active) {
-            GroupState.beginFallCountdown()
+        if (com.cruze.Settings.fallDetection &&
+            fallDetector.update(sample).phase == FallPhase.CONFIRMED && GroupState.active
+        ) {
+            GroupState.beginFallCountdown(com.cruze.Settings.fallCountdownSec)
         }
         // The countdown has to run even with no GPS updates coming in.
         if (GroupState.fireFallIfElapsed()) {

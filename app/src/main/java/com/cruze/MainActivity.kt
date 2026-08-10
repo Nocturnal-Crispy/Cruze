@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -53,6 +54,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.cruze.Settings
 import com.cruze.data.SavedTrack
 import com.cruze.garage.GarageViewModel
 import com.cruze.nav.LocationSource
@@ -67,6 +69,7 @@ import com.cruze.ui.GloveTarget
 import com.cruze.ui.NavScreen
 import com.cruze.ui.PlanScreen
 import com.cruze.ui.RidesScreen
+import com.cruze.ui.SettingsScreen
 import com.cruze.ui.initOsmdroid
 
 class MainActivity : ComponentActivity() {
@@ -78,13 +81,18 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, true)
         initOsmdroid(this)
         location = LocationSource(this)
-        setContent { CruzeTheme { App(onPermissionGranted = { location.start() }) } }
+        Settings.load(this)
+        setContent {
+            CruzeTheme(dark = Settings.darkTheme) {
+                App(onPermissionGranted = { location.start() })
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
         // A rider should never have the screen time out mid-corner.
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Settings.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // The map needs to know where the rider is even when no ride is running.
         location.start()
     }
@@ -102,6 +110,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     GROUP("Group", Icons.Default.Group),
     RIDES("Rides", Icons.Default.Route),
     GARAGE("Garage", Icons.Default.DirectionsBike),
+    SETTINGS("Settings", Icons.Default.Settings),
 }
 
 @Composable
@@ -262,6 +271,8 @@ private fun App(
                     },
                     onRestore = { openBackup.launch(arrayOf("application/json", "text/plain", "*/*")) },
                 )
+
+                Tab.SETTINGS -> SettingsScreen(versionName = appVersion(ctx))
             }
         }
     }
@@ -360,5 +371,9 @@ private fun writeText(
 private fun android.content.Context.hasLocationPermission() =
     ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
         PackageManager.PERMISSION_GRANTED
+
+private fun appVersion(ctx: android.content.Context): String = runCatching {
+    ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "0.1"
+}.getOrDefault("0.1")
 
 private fun String.safe() = replace(Regex("[^A-Za-z0-9 _-]"), "").trim().ifBlank { "cruze" }

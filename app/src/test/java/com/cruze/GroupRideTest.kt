@@ -74,6 +74,22 @@ class GroupRideTest {
     // --- group addressing ------------------------------------------------------------------
 
     @Test
+    fun `every rider id maps to a real palette colour`() {
+        // A hash with the high bit set used to truncate to a negative index and crash.
+        repeat(5000) {
+            val id = Wire.newRiderId()
+            require(riderColorIndex(id) in 0 until 8) { "bad index for $id" }
+        }
+        listOf("SIMLEADER001", "SIMSWEEP0002", "SIMRIDER0003", "", "\uFFFF").forEach {
+            require(riderColorIndex(it) in 0 until 8) { "bad index for '$it'" }
+        }
+    }
+
+    /** Mirrors the index maths in riderColor, which cannot be called without Compose. */
+    private fun riderColorIndex(riderId: String, palette: Int = 8) =
+        ((riderId.hashCode().toLong() and 0xFFFFFFFFL) % palette).toInt()
+
+    @Test
     fun `join codes avoid characters that get misheard`() {
         repeat(200) {
             val code = Wire.newJoinCode()
@@ -142,12 +158,18 @@ class GroupRideTest {
     fun `update rate backs off when it safely can and speeds up when it matters`() {
         // Parked: almost silent.
         assertEquals(30_000L, updateIntervalMs(50.0, false, null, stationary = true))
-        // Approaching a junction while navigating: fastest.
-        assertEquals(1_000L, updateIntervalMs(100.0, true, 200.0, stationary = false))
+        // Approaching a junction while navigating: fastest we dare push the free relay.
+        assertEquals(3_000L, updateIntervalMs(100.0, true, 200.0, stationary = false))
         // Strung out across a mile.
-        assertEquals(2_000L, updateIntervalMs(1500.0, false, null, stationary = false))
+        assertEquals(5_000L, updateIntervalMs(1500.0, false, null, stationary = false))
         // Bunched and cruising: cheapest.
-        assertEquals(10_000L, updateIntervalMs(80.0, false, null, stationary = false))
+        assertEquals(12_000L, updateIntervalMs(80.0, false, null, stationary = false))
+        // Nothing may ever be fast enough to drain the relay's bucket.
+        listOf(true, false).forEach { nav ->
+            listOf(0.0, 500.0, 5000.0).forEach { spread ->
+                assertTrue(updateIntervalMs(spread, nav, 10.0, false) >= 3_000L)
+            }
+        }
         // Rate must never get faster as the group bunches up.
         val spreads = listOf(50.0, 200.0, 400.0, 900.0)
         val rates = spreads.map { updateIntervalMs(it, false, null, false) }

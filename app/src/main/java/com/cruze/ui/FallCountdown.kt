@@ -43,7 +43,7 @@ fun FallCountdownOverlay() {
     val ctx = LocalContext.current
     val target = deadline ?: return
 
-    var secondsLeft by remember { mutableIntStateOf(30) }
+    var secondsLeft by remember { mutableIntStateOf(com.cruze.Settings.fallCountdownSec) }
 
     LaunchedEffect(target) {
         while (true) {

@@ -2,6 +2,7 @@ package com.cruze.route
 
 import com.cruze.LatLon
 import com.cruze.M_PER_MILE
+import com.cruze.Settings
 import com.cruze.bearingDeg
 import com.cruze.destinationPoint
 import com.cruze.distanceM
@@ -22,6 +23,11 @@ import org.json.JSONObject
 object Valhalla {
     private const val URL = "https://valhalla1.openstreetmap.de/route"
     private val JSON = "application/json".toMediaType()
+
+    private fun unitsParam() = if (Settings.metric) "kilometers" else "miles"
+
+    /** Valhalla reports lengths in whatever unit we asked for; store metres internally. */
+    private fun lengthToMetres() = if (Settings.metric) 1000.0 else M_PER_MILE
 
     suspend fun plan(
         waypoints: List<Waypoint>,
@@ -105,12 +111,15 @@ object Valhalla {
             put("costing_options", JSONObject().apply {
                 put("motorcycle", JSONObject().apply {
                     put("use_highways", useHighways)
-                    put("use_tolls", 0.2)
-                    put("use_trails", 0.0)
+                    put("use_tolls", if (Settings.avoidTolls) 0.0 else 0.5)
+                    put("use_ferry", if (Settings.avoidFerries) 0.0 else 0.5)
+                    // Trails are unpaved by definition; tracks cover the rest.
+                    put("use_trails", if (Settings.avoidUnpaved) 0.0 else 0.4)
+                    put("use_tracks", if (Settings.avoidUnpaved) 0.0 else 0.3)
                 })
             })
             // Drives the spoken instructions too — "in a quarter mile, turn right".
-            put("directions_options", JSONObject().put("units", "miles"))
+            put("directions_options", JSONObject().put("units", unitsParam()))
             put("alternates", 2)
         }
 
@@ -165,7 +174,7 @@ object Valhalla {
                         streets = m.optJSONArray("street_names")?.let { a ->
                             (0 until a.length()).joinToString(", ") { a.optString(it) }
                         }.orEmpty(),
-                        lengthM = m.optDouble("length", 0.0) * M_PER_MILE,
+                        lengthM = m.optDouble("length", 0.0) * lengthToMetres(),
                         timeS = m.optDouble("time", 0.0),
                         beginIdx = (m.optInt("begin_shape_index") + idxShift).coerceAtLeast(0),
                         endIdx = (m.optInt("end_shape_index") + idxShift).coerceAtLeast(0),
@@ -178,7 +187,7 @@ object Valhalla {
         return RoutePlan(
             shape = shape,
             maneuvers = maneuvers,
-            lengthM = sum.optDouble("length", 0.0) * M_PER_MILE,
+            lengthM = sum.optDouble("length", 0.0) * lengthToMetres(),
             timeS = sum.optDouble("time", 0.0),
             hasHighway = sum.optBoolean("has_highway", false),
             waypoints = waypoints,
