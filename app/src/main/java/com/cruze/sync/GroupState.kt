@@ -205,7 +205,11 @@ object GroupState {
         _sharedRoute.value = null
         _routeProgress.value = null
         assembler.clear()
-        onSessionChanged?.invoke(false)
+        // No stop-then-start bounce here. It sent STOP_ALL and START_GROUP to the service
+        // milliseconds apart; the STOP_ALL called stopSelf and cancelled the service's
+        // coroutine scope, and the START_GROUP that followed landed on the same instance —
+        // which then ran on with a dead scope and never broadcast a single position.
+        // repository.join() already tears down any previous ride.
         lastPublishAt = 0L
         lastPublished = null
         repository.join(s.joinCode, me(s, batteryPct = 100))
